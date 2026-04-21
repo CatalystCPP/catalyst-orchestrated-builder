@@ -34,7 +34,7 @@ common:
     - logging: false
     - estimates:
         default: false
-        files: ["src/work_estimate.cpp", "include/cbe/work_estimate.hpp"]
+        files: [src/work_estimate.cpp, include/cbe/work_estimate.hpp]
 test:
   manifest:
     dirs:

@@ -25,8 +25,8 @@
 #include <string>
 #include <string_view>
 #include <sys/mman.h>
-#include <unistd.h>
 #include <thread>
+#include <unistd.h>
 #include <vector>
 
 namespace {
@@ -126,6 +126,10 @@ Result<void> Executor::clean() {
     std::println("Cleaning build artifacts...");
 
     for (const auto &step : build_graph.steps()) {
+        if (config.clean_cc_only)
+            if (step.tool != "cxx" && step.tool != "cc") [[likely]]
+                continue;
+
         if (std::filesystem::exists(step.output)) {
             std::error_code ec;
             std::filesystem::remove(step.output, ec);
@@ -452,7 +456,7 @@ Result<void> Executor::execute() {
             }
 
             if (use_rsp) {
-                 args.push_back(std::string("@") + rsp_path.string());
+                args.push_back(std::string("@") + rsp_path.string());
             } else {
                 for (const auto &in : inputs)
                     args.emplace_back(in);
@@ -617,12 +621,11 @@ Result<void> Executor::execute() {
                 bool build_finished = (completed_count == total_nodes);
                 bool stall_detected = (active_workers == 0);
                 constexpr auto TUNABLE__notify_all_criteria = 10;
-                if (build_finished || error_occurred || stall_detected) {
+                if (build_finished || error_occurred || stall_detected ||
+                    new_work_count >= TUNABLE__notify_all_criteria) {
                     cv_ready.notify_all();
                 } else if (new_work_count == 1) {
                     cv_ready.notify_one();
-                } else if (new_work_count >= TUNABLE__notify_all_criteria) {
-                    cv_ready.notify_all();
                 } else {
                     for (size_t ii = 0; ii < new_work_count; ++ii) {
                         cv_ready.notify_one();
@@ -667,8 +670,13 @@ Result<void> Executor::execute() {
         localtime_r(&now_time, &local_tm);
         auto subsec_ns = epoch_ns % 1'000'000'000;
         auto timestamp = std::format("{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:09}",
-            local_tm.tm_year + 1900, local_tm.tm_mon + 1, local_tm.tm_mday,
-            local_tm.tm_hour, local_tm.tm_min, local_tm.tm_sec, subsec_ns);
+                                     local_tm.tm_year + 1900,
+                                     local_tm.tm_mon + 1,
+                                     local_tm.tm_mday,
+                                     local_tm.tm_hour,
+                                     local_tm.tm_min,
+                                     local_tm.tm_sec,
+                                     subsec_ns);
         if (is_tty) {
             std::println("\r\033[K[{}] \033[32m[CBE FINISHED: {}]\033[0m", timestamp, final_output_name);
         } else {

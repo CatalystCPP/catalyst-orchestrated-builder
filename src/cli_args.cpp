@@ -64,6 +64,8 @@ Result<CliArgs> cliArgs(const int argc, const char *const *argv) {
         }
         if (arg == "-n" || arg == "--dry-run") {
             par.config.dry_run = true;
+        } else if (arg == "-i") {
+            par.config.clean_cc_only = true;
         } else if (arg == "-t") {
             std::string_view tool;
             if (i + 1 >= argc) {
@@ -109,6 +111,7 @@ void printHelp() {
     println("  -s, --silent                  Suppress cli output, only print errors");
     println("  -t <tool>                     Run a subtool. Valid tools are:");
     println("                                  clean    - remove build artifacts");
+    println("                                             (-i: clean only compiler outputs)");
     println("                                  compdb   - generate compile_commands.json");
     println("                                  graph    - generate DOT graph of build");
     println("                                  commands - print commands that would be executed");

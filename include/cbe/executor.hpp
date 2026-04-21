@@ -53,6 +53,7 @@ public:
 struct ExecutorConfig {
     bool dry_run = false;                              ///< If true, print commands without executing.
     bool clean = false;                                ///< If true, clean artifacts instead of building.
+    bool clean_cc_only = false;                        ///< If true, only clean cc and cxx steps.
     bool silent = false;                               ///< If true, suppress all output except errors.
     bool keep_going = false;                            ///< If true, continue building other steps after an error.
     size_t jobs = 0;                                   ///< Number of parallel jobs (0 = auto-detect).
