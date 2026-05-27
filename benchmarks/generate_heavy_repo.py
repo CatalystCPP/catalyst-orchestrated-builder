@@ -38,17 +38,20 @@ def generate_headers():
 
 
 def generate_sources():
-    source_files = []
+    source_info = []
     for i in range(NUM_SOURCES):
         name = f"source_{i}.cpp"
         filename = os.path.join(SRC_DIR, name)
-        source_files.append(name)
+        
+        # Vary the number of included headers for different lengths
+        num_deps = random.randint(5, 150)
+        source_info.append((name, num_deps))
+        
         with open(filename, "w") as f:
             f.write(f"// Source {i}\n")
 
             # Include random headers
-            deps = random.sample(range(NUM_HEADERS), min(
-                NUM_HEADERS, HEADERS_PER_SOURCE))
+            deps = random.sample(range(NUM_HEADERS), min(NUM_HEADERS, num_deps))
             for dep in deps:
                 f.write(f"#include \"header_{dep}.hpp\"\n")
 
@@ -73,7 +76,7 @@ def generate_sources():
         f.write("    return 0;\n")
         f.write("}\n")
 
-    return source_files
+    return source_info
 
 
 def generate_catalyst_manifest(source_files):
@@ -177,18 +180,23 @@ def generate_makefile(source_files):
         f.write("-include " + " ".join(deps) + "\n")
 
 
-def generate_estimates(source_files):
+def generate_estimates(source_info):
     estimates_path = os.path.join(ROOT_DIR, "catalyst.estimates")
     with open(estimates_path, "w") as f:
-        for i, src in enumerate(source_files):
+        entries = []
+        for src, num_deps in source_info:
             obj_name = f"build/{src}.o"
-            # half are heavy (500), half are light (20)
-            estimate = 500 if i % 2 == 0 else 20
-            f.write(f"{obj_name}|{estimate}\n")
-        # main
-        f.write("build/main.cpp.o|150\n")
-        # link step
-        f.write("build/heavy_app|1000\n")
+            entries.append((obj_name, num_deps))
+        
+        # Add main and link step estimates
+        entries.append(("build/main.cpp.o", 80))
+        entries.append(("build/heavy_app", 300))
+        
+        # Sort lexicographically by path
+        entries.sort()
+        
+        for path, est in entries:
+            f.write(f"{path}|{est}\n")
 
 
 if __name__ == "__main__":
@@ -196,13 +204,14 @@ if __name__ == "__main__":
     print("Generating headers...")
     generate_headers()
     print("Generating sources...")
-    srcs = generate_sources()
+    src_info = generate_sources()
+    srcs = [name for name, _ in src_info]
 
     print("Generating catalyst manifest...")
     generate_catalyst_manifest(srcs)
 
     print("Generating catalyst estimates...")
-    generate_estimates(srcs)
+    generate_estimates(src_info)
 
     print("Generating ninja manifest...")
     generate_ninja_manifest(srcs)

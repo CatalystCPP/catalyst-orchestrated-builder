@@ -681,9 +681,9 @@ Result<void> Executor::execute() {
 
                 bool build_finished = (completed_count == total_nodes);
                 bool stall_detected = (active_workers == 0);
-                constexpr auto TUNABLE__notify_all_criteria = 10;
+                constexpr auto TUNABLE_NOTIFY_ALL_CRITERIA = 10;
                 if (build_finished || error_occurred || stall_detected ||
-                    new_work_count >= TUNABLE__notify_all_criteria) {
+                    new_work_count >= TUNABLE_NOTIFY_ALL_CRITERIA) {
                     cv_ready.notify_all();
                 } else if (new_work_count == 1) {
                     cv_ready.notify_one();

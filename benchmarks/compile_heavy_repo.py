@@ -1,4 +1,5 @@
 import generate_heavy_repo
+import os
 
 import subprocess
 import time
@@ -76,10 +77,14 @@ def main():
     print("Generating headers...")
     generate_heavy_repo.generate_headers()
     print("Generating sources...")
-    srcs = generate_heavy_repo.generate_sources()
+    src_info = generate_heavy_repo.generate_sources()
+    srcs = [name for name, _ in src_info]
 
     print("Generating catalyst manifest...")
     generate_heavy_repo.generate_catalyst_manifest(srcs)
+
+    print("Generating catalyst estimates...")
+    generate_heavy_repo.generate_estimates(src_info)
 
     print("Generating ninja manifest...")
     generate_heavy_repo.generate_ninja_manifest(srcs)
