@@ -27,8 +27,12 @@ def benchmark_catalyst_builds():
         ("ninja -t clean", ["ninja", "-C", root_dir, "-t", "clean"], True),
         ("cbe (system)", [cbe_system, "-C", root_dir], True),
         ("cbe (system) -t clean", [cbe_system, "-C", root_dir, "-t", "clean"], True),
+        ("cbe (system, mimalloc)", [cbe_system, "-C", root_dir], True),
+        ("cbe (system, mimalloc) -t clean", [cbe_system, "-C", root_dir, "-t", "clean"], True),
         ("cbe (built, affinity)", [cbe_bin, "-C", root_dir], True),
-        ("cbe (built, affinity) -t clean", [cbe_bin, "-C", root_dir, "-t", "clean"], True)
+        ("cbe (built, affinity) -t clean", [cbe_bin, "-C", root_dir, "-t", "clean"], True),
+        ("cbe (built, affinity, mimalloc)", [cbe_bin, "-C", root_dir], True),
+        ("cbe (built, affinity, mimalloc) -t clean", [cbe_bin, "-C", root_dir, "-t", "clean"], True)
     ]
 
     results = []
@@ -37,17 +41,21 @@ def benchmark_catalyst_builds():
 
     for label, cmd, should_time in tasks:
         try:
+            env = os.environ.copy()
+            if "mimalloc" in label:
+                env["LD_PRELOAD"] = "/usr/lib/x86_64-linux-gnu/libmimalloc.so"
+
             if should_time:
                 start = time.perf_counter()
                 if "cbe" in label:
-                    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
                 else:
-                    subprocess.run(cmd, check=True, capture_output=True, text=True)
+                    subprocess.run(cmd, check=True, capture_output=True, text=True, env=env)
                 end = time.perf_counter()
                 results.append((label, f"{end - start:.4f}s"))
             else:
                 # Run without timing (equivalent to the untimed ninja clean in your bash)
-                subprocess.run(cmd, check=True, capture_output=True)
+                subprocess.run(cmd, check=True, capture_output=True, env=env)
 
         except FileNotFoundError:
             if should_time:
