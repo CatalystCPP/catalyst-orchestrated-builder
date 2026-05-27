@@ -486,15 +486,56 @@ Result<void> Executor::execute() {
         }
 
         std::lock_guard lock(cout_tty_mtx);
+
+        std::string raw_action = std::string(step.tool);
+        std::string target = std::string(step.output);
+
+        if (step.tool == "cc" || step.tool == "cxx") {
+            raw_action = "Compiling";
+            if (!step.parsed_inputs.empty()) {
+                target = std::string(step.parsed_inputs[0]);
+            }
+        } else if (step.tool == "ld") {
+            raw_action = "Linking";
+        } else if (step.tool == "sld") {
+            raw_action = "Linking library";
+        } else if (step.tool == "ar") {
+            raw_action = "Archiving";
+        }
+
+        std::string action;
+        if (is_tty) {
+            std::string color_code;
+            if (step.tool == "cc" || step.tool == "cxx") {
+                color_code = "\033[36m"; // Cyan
+            } else if (step.tool == "ld") {
+                color_code = "\033[32m"; // Green
+            } else if (step.tool == "sld") {
+                color_code = "\033[35m"; // Magenta
+            } else if (step.tool == "ar") {
+                color_code = "\033[33m"; // Yellow
+            }
+
+            // Pad the raw action name first, then wrap in color codes to ensure perfect TTY alignment
+            std::string padded = std::format("{:<15}", raw_action);
+            if (!color_code.empty()) {
+                action = std::format("{}{}\033[0m", color_code, padded);
+            } else {
+                action = padded;
+            }
+        } else {
+            action = raw_action;
+        }
+
         if (config.dry_run) {
-            std::cout << "[DRY RUN] " << step.tool << " -> " << step.output << std::endl;
+            std::cout << "[DRY RUN] " << action << " " << target << std::endl;
         } else {
             auto current = steps_completed.fetch_add(1, std::memory_order_relaxed) + 1;
             if (is_tty) {
-                std::print("\r\033[K[{}/{}] {:>3} -> {}", current, steps_to_build, step.tool, step.output);
+                std::print("\r\033[K[{}/{}] {} {}", current, steps_to_build, action, target);
                 std::cout.flush();
             } else {
-                std::println("[{}/{}] {:>3} -> {}", current, steps_to_build, step.tool, step.output);
+                std::println("[{}/{}] {:<15} {}", current, steps_to_build, action, target);
             }
         }
     };
