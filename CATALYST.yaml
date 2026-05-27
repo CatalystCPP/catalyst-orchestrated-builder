@@ -32,6 +32,7 @@ common:
     - binary: true
     - profiling: false
     - logging: false
+    - heterogenous_core_affinity: false
     - estimates:
         default: false
         files: [src/work_estimate.cpp, include/cbe/work_estimate.hpp]

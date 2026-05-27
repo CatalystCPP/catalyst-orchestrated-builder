@@ -177,6 +177,20 @@ def generate_makefile(source_files):
         f.write("-include " + " ".join(deps) + "\n")
 
 
+def generate_estimates(source_files):
+    estimates_path = os.path.join(ROOT_DIR, "catalyst.estimates")
+    with open(estimates_path, "w") as f:
+        for i, src in enumerate(source_files):
+            obj_name = f"build/{src}.o"
+            # half are heavy (500), half are light (20)
+            estimate = 500 if i % 2 == 0 else 20
+            f.write(f"{obj_name}|{estimate}\n")
+        # main
+        f.write("build/main.cpp.o|150\n")
+        # link step
+        f.write("build/heavy_app|1000\n")
+
+
 if __name__ == "__main__":
     ensure_dirs()
     print("Generating headers...")
@@ -186,6 +200,9 @@ if __name__ == "__main__":
 
     print("Generating catalyst manifest...")
     generate_catalyst_manifest(srcs)
+
+    print("Generating catalyst estimates...")
+    generate_estimates(srcs)
 
     print("Generating ninja manifest...")
     generate_ninja_manifest(srcs)

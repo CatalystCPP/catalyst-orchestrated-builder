@@ -13,16 +13,21 @@ def benchmark_catalyst_builds():
     # Target directory for the -C flag
     root_dir = generate_heavy_repo.ROOT_DIR
 
-    # Define the command sequence: (Label, Command List, Should Time)
-    cbe_bin = "/home/som/Projects/catalyst/catalyst-build-executor/build/common-ccache/cbe"
+    # Get paths dynamically to avoid hardcoded user home directories
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(script_dir)
+    cbe_bin = os.path.join(project_root, "build/common-ccache/cbe")
+    cbe_system = os.path.expanduser("~/.local/bin/cbe")
     tasks = [
         ("make", ["make", "-C", root_dir], True),
         ("ninja -t clean", ["ninja", "-C", root_dir,
          "-t", "clean"], False),  # Initial setup clean
         ("ninja", ["ninja", "-C", root_dir], True),
         ("ninja -t clean", ["ninja", "-C", root_dir, "-t", "clean"], True),
-        ("cbe", [cbe_bin, "-C", root_dir], True),
-        ("cbe -t clean", [cbe_bin, "-C", root_dir, "-t", "clean"], True)
+        ("cbe (system)", [cbe_system, "-C", root_dir], True),
+        ("cbe (system) -t clean", [cbe_system, "-C", root_dir, "-t", "clean"], True),
+        ("cbe (built, affinity)", [cbe_bin, "-C", root_dir], True),
+        ("cbe (built, affinity) -t clean", [cbe_bin, "-C", root_dir, "-t", "clean"], True)
     ]
 
     results = []

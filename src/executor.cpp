@@ -29,6 +29,10 @@
 #include <unistd.h>
 #include <vector>
 
+#if FF_cbe__heterogenous_core_affinity
+#include <sys/resource.h>
+#endif
+
 namespace {
 struct BuildCompdbParams {
     const std::vector<size_t> &order;
@@ -332,6 +336,10 @@ Result<void> Executor::execute() {
         }
     }
 
+#if FF_cbe__heterogenous_core_affinity
+    static constexpr size_t TUNABLE_HEAVY_THRESHOLD = 100;
+#endif
+
     struct Task {
         size_t node_idx;
         size_t estimate;
@@ -613,7 +621,7 @@ Result<void> Executor::execute() {
 
     auto worker = [&]() {
         while (true) {
-            size_t node_idx;
+            Task task;
             {
                 std::unique_lock lock(mtx);
                 cv_ready.wait(lock, [&] {
@@ -627,12 +635,24 @@ Result<void> Executor::execute() {
                     return;
                 }
 
-                node_idx = ready_queue.top().node_idx;
+                task = ready_queue.top();
                 ready_queue.pop();
                 active_workers++;
             }
 
-            int result = process_step(node_idx);
+#if FF_cbe__heterogenous_core_affinity
+            if (task.estimate > TUNABLE_HEAVY_THRESHOLD) {
+                setpriority(PRIO_PROCESS, 0, -5); // Hint: P-core
+            } else {
+                setpriority(PRIO_PROCESS, 0, 5);  // Hint: E-core
+            }
+#endif
+
+            int result = process_step(task.node_idx);
+
+#if FF_cbe__heterogenous_core_affinity
+            setpriority(PRIO_PROCESS, 0, 0); // Reset to default
+#endif
 
             {
                 std::lock_guard lock(mtx);
@@ -649,7 +669,7 @@ Result<void> Executor::execute() {
                     }
                 } else {
                     completed_count.fetch_add(1, std::memory_order_relaxed);
-                    const auto &node = build_graph.nodes()[node_idx];
+                    const auto &node = build_graph.nodes()[task.node_idx];
                     for (size_t neighbor : node.out_edges) {
                         in_degrees[neighbor]--;
                         if (in_degrees[neighbor] == 0) {
