@@ -5,6 +5,7 @@
 #include "cbe/process_exec.hpp"
 #include "cbe/utility.hpp"
 #include "cbe/mpmc_queue.hpp"
+#include "cbe/mpsc_queue.hpp"
 #include "nlohmann/json_fwd.hpp"
 
 #include <atomic>
@@ -327,9 +328,19 @@ struct Executor::ExecuteContext {
         }
     };
 
+    struct LogEvent {
+        std::string console_message;
+        std::string log_message;
+        bool is_error = false;
+        bool is_poison_pill = false;
+    };
+
     LockFreeMPMCQueue<Task> ready_queue;
     std::atomic<size_t> tasks_available{0};
     std::atomic<size_t> sleeping_threads{0};
+
+    LockFreeMPSCQueue<LogEvent> progress_queue;
+    std::atomic<size_t> messages_enqueued{0};
 
     std::vector<std::atomic<int>> in_degrees;
 
@@ -338,8 +349,6 @@ struct Executor::ExecuteContext {
     size_t total_nodes{0};
     size_t steps_to_build{0};
     std::atomic<bool> error_occurred{false};
-
-    std::mutex cout_tty_mtx;
 
     const std::vector<std::string> cc_vec;
     const std::vector<std::string> cxx_vec;
@@ -356,6 +365,7 @@ struct Executor::ExecuteContext {
                    std::vector<std::string> ldflags, std::vector<std::string> ldlibs,
                    catalyst::BuildGraph bg)
         : ready_queue(node_count),
+          progress_queue(8192),
           in_degrees(node_count),
           total_nodes(node_count),
           cc_vec(std::move(cc)), cxx_vec(std::move(cxx)),
@@ -485,8 +495,6 @@ void Executor::print_message(const BuildStep &step, ExecuteContext& ctx, bool is
         return;
     }
 
-    std::lock_guard lock(ctx.cout_tty_mtx);
-
     std::string raw_action = std::string(step.tool);
     std::string target = std::string(step.output);
 
@@ -526,17 +534,21 @@ void Executor::print_message(const BuildStep &step, ExecuteContext& ctx, bool is
         action = raw_action;
     }
 
+    std::string msg;
     if (config.dry_run) {
-        std::cout << "[DRY RUN] " << action << " " << target << std::endl;
+        msg = std::format("[DRY RUN] {} {}\n", action, target);
     } else {
         auto current = ctx.steps_completed.fetch_add(1, std::memory_order_relaxed) + 1;
         if (is_tty) {
-            std::print("\r\033[K[{}/{}] {} {}", current, ctx.steps_to_build, action, target);
-            std::cout.flush();
+            msg = std::format("\r\033[K[{}/{}] {} {}", current, ctx.steps_to_build, action, target);
         } else {
-            std::println("[{}/{}] {:<15} {}", current, ctx.steps_to_build, action, target);
+            msg = std::format("[{}/{}] {:<15} {}\n", current, ctx.steps_to_build, action, target);
         }
     }
+
+    while (!ctx.progress_queue.enqueue({msg, "", false, false})) std::this_thread::yield();
+    ctx.messages_enqueued.fetch_add(1, std::memory_order_release);
+    ctx.messages_enqueued.notify_one();
 }
 
 /**
@@ -571,8 +583,10 @@ int Executor::process_step(size_t node_idx, ExecuteContext& ctx, StatCache& stat
             auto end = std::chrono::steady_clock::now();
             std::chrono::duration<double> diff = end - start;
             {
-                std::lock_guard lock(ctx.cout_tty_mtx);
-                std::println("Step {} took {:.4f}s", step.output, diff.count());
+                std::string msg = std::format("Step {} took {:.4f}s\n", step.output, diff.count());
+                while (!ctx.progress_queue.enqueue({msg, "", false, false})) std::this_thread::yield();
+                ctx.messages_enqueued.fetch_add(1, std::memory_order_release);
+                ctx.messages_enqueued.notify_one();
             }
 #endif
 
@@ -580,35 +594,46 @@ int Executor::process_step(size_t node_idx, ExecuteContext& ctx, StatCache& stat
                 auto [ec, output] = *res;
 #if FF_cbe__logging
                 if (capture_output && !output.empty()) {
-                    std::lock_guard lock(ctx.cout_tty_mtx);
+                    std::string console_msg;
                     if (!config.silent || ec != 0) {
-                        std::print("{}", output);
+                        console_msg = output;
                     }
 
-                    std::ofstream log_file(config.build_log_file, std::ios_base::app);
-                    if (log_file) {
-                        log_file << "=== " << step.tool << " -> " << step.output << " ===\n";
-                        log_file << output;
-                        if (output.back() != '\n') {
-                            log_file << '\n';
-                        }
-                        log_file << '\n';
+                    std::string log_msg;
+                    if (!config.build_log_file.empty()) {
+                        log_msg = std::format("=== {} -> {} ===\n{}", step.tool, step.output, output);
+                        if (output.back() != '\n') log_msg += '\n';
+                        log_msg += '\n';
+                    }
+
+                    if (!console_msg.empty() || !log_msg.empty()) {
+                        while (!ctx.progress_queue.enqueue({console_msg, log_msg, ec != 0, false})) std::this_thread::yield();
+                        ctx.messages_enqueued.fetch_add(1, std::memory_order_release);
+                        ctx.messages_enqueued.notify_one();
                     }
                 }
 #endif
                 if (ec != 0) {
-                    std::println(stderr, "Build failed: {} -> {} (exit code {})", step.tool, step.output, ec);
+                    std::string err_msg = std::format("Build failed: {} -> {} (exit code {})\n", step.tool, step.output, ec);
+                    while (!ctx.progress_queue.enqueue({err_msg, "", true, false})) std::this_thread::yield();
+                    ctx.messages_enqueued.fetch_add(1, std::memory_order_release);
+                    ctx.messages_enqueued.notify_one();
                     return ec;
                 }
             } else {
-                std::println(stderr, "Failed to execute: {}", res.error());
+                std::string err_msg = std::format("Failed to execute: {}\n", res.error());
+                while (!ctx.progress_queue.enqueue({err_msg, "", true, false})) std::this_thread::yield();
+                ctx.messages_enqueued.fetch_add(1, std::memory_order_release);
+                ctx.messages_enqueued.notify_one();
                 return 1;
             }
         }
 #if FF_cbe__logging
         else {
-            std::lock_guard lock(ctx.cout_tty_mtx);
-            std::println("Skipping {} (up to date)", step.output);
+            std::string msg = std::format("Skipping {} (up to date)\n", step.output);
+            while (!ctx.progress_queue.enqueue({msg, "", false, false})) std::this_thread::yield();
+            ctx.messages_enqueued.fetch_add(1, std::memory_order_release);
+            ctx.messages_enqueued.notify_one();
         }
 #endif
     }
@@ -770,11 +795,14 @@ Result<void> Executor::execute() {
     bool is_tty = ::isatty(STDOUT_FILENO) != 0;
 
 #if FF_cbe__logging
+    std::ofstream* log_file_ptr = nullptr;
+    std::ofstream log_file;
     if (!config.build_log_file.empty()) {
-        std::ofstream log_file(config.build_log_file, std::ios::trunc);
+        log_file.open(config.build_log_file, std::ios::trunc);
         if (!log_file) {
             return std::unexpected(std::format("Failed to open build log file: {}", config.build_log_file));
         }
+        log_file_ptr = &log_file;
     }
 #endif
 
@@ -799,13 +827,61 @@ Result<void> Executor::execute() {
     if (thread_count == 0)
         thread_count = 1;
 
+    std::jthread progress_thread([&ctx
+#if FF_cbe__logging
+                                   , log_file_ptr
+#endif
+    ]() {
+        size_t processed = 0;
+        while (true) {
+            size_t enqueued = ctx.messages_enqueued.load(std::memory_order_acquire);
+            while (processed == enqueued) {
+                ctx.messages_enqueued.wait(processed, std::memory_order_acquire);
+                enqueued = ctx.messages_enqueued.load(std::memory_order_acquire);
+            }
+
+            ExecuteContext::LogEvent ev;
+            while (!ctx.progress_queue.dequeue(ev)) {
+                std::this_thread::yield();
+            }
+            processed++;
+
+            if (ev.is_poison_pill) {
+                return;
+            }
+            if (ev.is_error) {
+                if (!ev.console_message.empty()) {
+                    std::print(stderr, "{}", ev.console_message);
+                    std::cerr.flush();
+                }
+            } else {
+                if (!ev.console_message.empty()) {
+                    std::print("{}", ev.console_message);
+                    std::cout.flush();
+                }
+            }
+#if FF_cbe__logging
+            if (!ev.log_message.empty() && log_file_ptr && log_file_ptr->is_open()) {
+                (*log_file_ptr) << ev.log_message;
+                log_file_ptr->flush();
+            }
+#endif
+        }
+    });
+
     for (size_t i = 0; i < thread_count; ++i) {
         pool.emplace_back([this, &ctx, &stat_cache, is_tty, thread_count]() {
             this->worker_loop(ctx, stat_cache, is_tty, thread_count);
         });
     }
 
-    pool.clear(); // Join all threads
+    pool.clear(); // Join all worker threads
+
+    // Signal progress thread to exit
+    while (!ctx.progress_queue.enqueue({"", "", false, true})) std::this_thread::yield();
+    ctx.messages_enqueued.fetch_add(1, std::memory_order_release);
+    ctx.messages_enqueued.notify_one();
+    progress_thread.join();
 
     if (ctx.error_occurred) {
         if (!config.silent && is_tty && ctx.steps_completed > 0) {
