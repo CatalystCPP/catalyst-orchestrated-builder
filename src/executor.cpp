@@ -4,6 +4,7 @@
 #include "cbe/domain.hpp"
 #include "cbe/process_exec.hpp"
 #include "cbe/utility.hpp"
+#include "cbe/mpmc_queue.hpp"
 #include "nlohmann/json_fwd.hpp"
 
 #include <atomic>
@@ -316,30 +317,8 @@ Result<void> Executor::emit_commands() {
     return {};
 }
 
-Result<void> Executor::execute() {
-    pool.clear(); // Ensure clean state
 
-    catalyst::BuildGraph build_graph = builder.emit_graph();
-
-    const auto cc_vec = builder.getDefinitionOf<std::vector<std::string>>("cc");
-    const auto cxx_vec = builder.getDefinitionOf<std::vector<std::string>>("cxx");
-    const auto cflags_vec = builder.getDefinitionOf<std::vector<std::string>>("cflags");
-    const auto cxxflags_vec = builder.getDefinitionOf<std::vector<std::string>>("cxxflags");
-    const auto ldflags_vec = builder.getDefinitionOf<std::vector<std::string>>("ldflags");
-    const auto ldlibs_vec = builder.getDefinitionOf<std::vector<std::string>>("ldlibs");
-
-    // Build in-degrees
-    std::vector<int> in_degrees(build_graph.nodes().size(), 0);
-    for (const auto &node : build_graph.nodes()) {
-        for (size_t out : node.out_edges) {
-            in_degrees[out]++;
-        }
-    }
-
-#if FF_cbe__heterogenous_core_affinity
-    static constexpr size_t TUNABLE_HEAVY_THRESHOLD = 100;
-#endif
-
+struct Executor::ExecuteContext {
     struct Task {
         size_t node_idx;
         size_t estimate;
@@ -347,35 +326,447 @@ Result<void> Executor::execute() {
             return estimate < other.estimate;
         }
     };
-    std::priority_queue<Task> ready_queue;
 
-    auto push_ready = [&](size_t idx) {
-        size_t est = 0;
-#if FF_cbe__estimates
-        const auto &node = build_graph.nodes()[idx];
-        if (node.step_id.has_value()) {
-            est = estimator->getWorkEstimate(build_graph.steps()[*node.step_id].output);
-        }
-#endif
-        ready_queue.push({.node_idx = idx, .estimate = est});
-    };
+    LockFreeMPMCQueue<Task> ready_queue;
+    std::atomic<size_t> tasks_available{0};
+    std::atomic<size_t> sleeping_threads{0};
 
-    for (size_t i = 0; i < in_degrees.size(); ++i) {
-        if (in_degrees[i] == 0) {
-            push_ready(i);
-        }
-    }
+    std::vector<std::atomic<int>> in_degrees;
 
-    std::mutex mtx;
-    std::condition_variable cv_ready;
-    std::atomic<size_t> completed_count = 0;
-    size_t total_nodes = build_graph.nodes().size();
-    bool error_occurred = false;
-    size_t active_workers = 0;
-
-    StatCache stat_cache;
+    std::atomic<size_t> completed_count{0};
+    std::atomic<size_t> steps_completed{0};
+    size_t total_nodes{0};
+    size_t steps_to_build{0};
+    std::atomic<bool> error_occurred{false};
 
     std::mutex cout_tty_mtx;
+
+    const std::vector<std::string> cc_vec;
+    const std::vector<std::string> cxx_vec;
+    const std::vector<std::string> cflags_vec;
+    const std::vector<std::string> cxxflags_vec;
+    const std::vector<std::string> ldflags_vec;
+    const std::vector<std::string> ldlibs_vec;
+
+    catalyst::BuildGraph build_graph;
+
+    ExecuteContext(size_t node_count,
+                   std::vector<std::string> cc, std::vector<std::string> cxx,
+                   std::vector<std::string> cflags, std::vector<std::string> cxxflags,
+                   std::vector<std::string> ldflags, std::vector<std::string> ldlibs,
+                   catalyst::BuildGraph bg)
+        : ready_queue(node_count),
+          in_degrees(node_count),
+          total_nodes(node_count),
+          cc_vec(std::move(cc)), cxx_vec(std::move(cxx)),
+          cflags_vec(std::move(cflags)), cxxflags_vec(std::move(cxxflags)),
+          ldflags_vec(std::move(ldflags)), ldlibs_vec(std::move(ldlibs)),
+          build_graph(std::move(bg)) {}
+};
+
+/**
+ * @brief Evaluates whether a build step needs to be re-run based on file timestamps.
+ */
+// needs_rebuild is already defined earlier
+
+/**
+ * @brief Generates the command-line arguments for a specific build step.
+ *
+ * Includes logic for resolving the appropriate toolchain commands and generating
+ * response (.rsp) files for linking steps with many inputs to avoid command-line
+ * length limits.
+ */
+std::vector<std::string> Executor::build_command_args(const BuildStep &step, bool dry_run_mode) const {
+    std::vector<std::string> args;
+    static constexpr auto ARGS_VEC_INIT_SZ = 40;
+    args.reserve(ARGS_VEC_INIT_SZ);
+
+    auto add_parts = [&args](const auto &parts) {
+        args.reserve(args.size() + parts.size());
+        for (const auto &part : parts) {
+            if (part.begin() != part.end()) {
+                args.push_back(std::ranges::to<std::string>(part));
+            }
+        }
+    };
+
+    const auto &inputs = step.parsed_inputs;
+
+    if (step.tool == "cc") {
+        add_parts(builder.getDefinitionOf<std::vector<std::string>>("cc"));
+        add_parts(builder.getDefinitionOf<std::vector<std::string>>("cflags"));
+        args.insert(args.end(), {"-MMD", "-MF", std::string(step.output) + ".d", "-c"});
+        for (const auto &in : inputs)
+            args.emplace_back(in);
+        args.emplace_back("-o");
+        args.emplace_back(step.output);
+    } else if (step.tool == "cxx") {
+        add_parts(builder.getDefinitionOf<std::vector<std::string>>("cxx"));
+        add_parts(builder.getDefinitionOf<std::vector<std::string>>("cxxflags"));
+        args.insert(args.end(), {"-MMD", "-MF", std::string(step.output) + ".d", "-c"});
+        for (const auto &in : inputs)
+            args.emplace_back(in);
+        args.emplace_back("-o");
+        args.emplace_back(step.output);
+    } else if (step.tool == "ld") {
+        add_parts(builder.getDefinitionOf<std::vector<std::string>>("cxx"));
+        static constexpr auto TUNABLE_INPUT_SZ = 50;
+        std::filesystem::path rsp_path = std::filesystem::path(step.output).replace_extension(".rsp");
+
+        bool use_rsp = false;
+        if (std::filesystem::exists(rsp_path) && isNewer(rsp_path, config.build_file)) {
+            use_rsp = true;
+        } else if (inputs.size() > TUNABLE_INPUT_SZ) {
+            use_rsp = true;
+            if (!dry_run_mode) {
+                std::string rsp_content;
+                constexpr auto TUNABLE_RSP_PATH_ESTIMATE = 100;
+                rsp_content.reserve(inputs.size() * TUNABLE_RSP_PATH_ESTIMATE);
+                for (const auto &input : inputs) {
+                    rsp_content += input;
+                    rsp_content += '\n';
+                }
+                std::ofstream rsp_file(rsp_path);
+                rsp_file.write(rsp_content.data(), static_cast<long>(rsp_content.size()));
+            }
+        }
+
+        if (use_rsp) {
+            args.push_back(std::string("@") + rsp_path.string());
+        } else {
+            for (const auto &in : inputs)
+                args.emplace_back(in);
+        }
+        args.emplace_back("-o");
+        args.emplace_back(step.output);
+        add_parts(builder.getDefinitionOf<std::vector<std::string>>("ldflags"));
+        add_parts(builder.getDefinitionOf<std::vector<std::string>>("ldlibs"));
+    } else if (step.tool == "ar") {
+        args.insert(args.end(), {"ar", "rcs", std::string(step.output)});
+        for (const auto &in : inputs)
+            args.emplace_back(in);
+    } else if (step.tool == "sld") {
+        add_parts(builder.getDefinitionOf<std::vector<std::string>>("cxx"));
+        args.emplace_back("-shared");
+        for (const auto &in : inputs)
+            args.emplace_back(in);
+        args.emplace_back("-o");
+        args.emplace_back(step.output);
+    }
+    return args;
+}
+
+/**
+ * @brief Enqueues a task representing a node ready to be processed.
+ *
+ * If work estimates are enabled, calculates the estimate for the node and assigns it.
+ * Utilizes the lock-free queue and notifies a sleeping worker thread via atomic wait primitives.
+ */
+void Executor::push_ready(size_t idx, ExecuteContext& ctx) {
+    size_t est = 0;
+#if FF_cbe__estimates
+    const auto &node = ctx.build_graph.nodes()[idx];
+    if (node.step_id.has_value()) {
+        est = estimator->getWorkEstimate(ctx.build_graph.steps()[*node.step_id].output);
+    }
+#endif
+    ctx.ready_queue.enqueue({.node_idx = idx, .estimate = est});
+    ctx.tasks_available.fetch_add(1, std::memory_order_release);
+    ctx.tasks_available.notify_one();
+}
+
+/**
+ * @brief Formats and prints a thread-safe progress message for a build step.
+ *
+ * Uses terminal color codes if stdout is a TTY and updates the line dynamically.
+ */
+void Executor::print_message(const BuildStep &step, ExecuteContext& ctx, bool is_tty) const {
+    if (config.silent) {
+        return;
+    }
+
+    std::lock_guard lock(ctx.cout_tty_mtx);
+
+    std::string raw_action = std::string(step.tool);
+    std::string target = std::string(step.output);
+
+    if (step.tool == "cc" || step.tool == "cxx") {
+        raw_action = "Compiling";
+        if (!step.parsed_inputs.empty()) {
+            target = std::string(step.parsed_inputs[0]);
+        }
+    } else if (step.tool == "ld") {
+        raw_action = "Linking";
+    } else if (step.tool == "sld") {
+        raw_action = "Linking library";
+    } else if (step.tool == "ar") {
+        raw_action = "Archiving";
+    }
+
+    std::string action;
+    if (is_tty) {
+        std::string color_code;
+        if (step.tool == "cc" || step.tool == "cxx") {
+            color_code = "\033[36m"; // Cyan
+        } else if (step.tool == "ld") {
+            color_code = "\033[32m"; // Green
+        } else if (step.tool == "sld") {
+            color_code = "\033[35m"; // Magenta
+        } else if (step.tool == "ar") {
+            color_code = "\033[33m"; // Yellow
+        }
+
+        std::string padded = std::format("{:<15}", raw_action);
+        if (!color_code.empty()) {
+            action = std::format("{}{}\033[0m", color_code, padded);
+        } else {
+            action = padded;
+        }
+    } else {
+        action = raw_action;
+    }
+
+    if (config.dry_run) {
+        std::cout << "[DRY RUN] " << action << " " << target << std::endl;
+    } else {
+        auto current = ctx.steps_completed.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (is_tty) {
+            std::print("\r\033[K[{}/{}] {} {}", current, ctx.steps_to_build, action, target);
+            std::cout.flush();
+        } else {
+            std::println("[{}/{}] {:<15} {}", current, ctx.steps_to_build, action, target);
+        }
+    }
+}
+
+/**
+ * @brief Processes a single build graph node.
+ *
+ * Verifies if the node requires rebuilding, generates its command, invokes the process
+ * executor, and captures/logs output in a thread-safe manner. Returns 0 on success.
+ */
+int Executor::process_step(size_t node_idx, ExecuteContext& ctx, StatCache& stat_cache, bool is_tty) const {
+    // NOLINTBEGIN(performance-avoid-endl)
+    const auto &node = ctx.build_graph.nodes()[node_idx];
+    if (node.step_id.has_value()) {
+        const auto &step = ctx.build_graph.steps()[*node.step_id];
+
+        if (needs_rebuild(step, stat_cache)) {
+            print_message(step, ctx, is_tty);
+            if (config.dry_run)
+                return 0;
+
+            auto args = build_command_args(step, false);
+
+#if FF_cbe__profiling
+            auto start = std::chrono::steady_clock::now();
+#endif
+#if FF_cbe__logging
+            bool capture_output = !config.build_log_file.empty();
+#else
+            bool capture_output = false;
+#endif
+            auto res = catalyst::process_exec(std::move(args), std::nullopt, std::nullopt, capture_output);
+#if FF_cbe__profiling
+            auto end = std::chrono::steady_clock::now();
+            std::chrono::duration<double> diff = end - start;
+            {
+                std::lock_guard lock(ctx.cout_tty_mtx);
+                std::println("Step {} took {:.4f}s", step.output, diff.count());
+            }
+#endif
+
+            if (res) {
+                auto [ec, output] = *res;
+#if FF_cbe__logging
+                if (capture_output && !output.empty()) {
+                    std::lock_guard lock(ctx.cout_tty_mtx);
+                    if (!config.silent || ec != 0) {
+                        std::print("{}", output);
+                    }
+
+                    std::ofstream log_file(config.build_log_file, std::ios_base::app);
+                    if (log_file) {
+                        log_file << "=== " << step.tool << " -> " << step.output << " ===\n";
+                        log_file << output;
+                        if (output.back() != '\n') {
+                            log_file << '\n';
+                        }
+                        log_file << '\n';
+                    }
+                }
+#endif
+                if (ec != 0) {
+                    std::println(stderr, "Build failed: {} -> {} (exit code {})", step.tool, step.output, ec);
+                    return ec;
+                }
+            } else {
+                std::println(stderr, "Failed to execute: {}", res.error());
+                return 1;
+            }
+        }
+#if FF_cbe__logging
+        else {
+            std::lock_guard lock(ctx.cout_tty_mtx);
+            std::println("Skipping {} (up to date)", step.output);
+        }
+#endif
+    }
+    return 0;
+    // NOLINTEND(performance-avoid-endl)
+}
+
+/**
+ * @brief Main worker thread logic.
+ *
+ * Loops indefinitely retrieving tasks from the lock-free queue. Uses atomic futex waits
+ * to sleep when the queue is empty. Implements deadlock detection to resolve stalled graphs.
+ */
+void Executor::worker_loop(ExecuteContext& ctx, StatCache& stat_cache, bool is_tty, size_t thread_count) {
+#if FF_cbe__heterogenous_core_affinity
+    static constexpr size_t TUNABLE_HEAVY_THRESHOLD = 100;
+#endif
+
+    while (true) {
+        ExecuteContext::Task task;
+        while (true) {
+            if (ctx.ready_queue.dequeue(task)) {
+                ctx.tasks_available.fetch_sub(1, std::memory_order_relaxed);
+                break;
+            }
+
+            if (ctx.completed_count.load(std::memory_order_acquire) == ctx.total_nodes ||
+                ctx.error_occurred.load(std::memory_order_acquire)) {
+                return;
+            }
+
+            size_t curr = ctx.tasks_available.load(std::memory_order_acquire);
+            if (curr == 0) {
+                if (ctx.completed_count.load(std::memory_order_acquire) == ctx.total_nodes ||
+                    ctx.error_occurred.load(std::memory_order_acquire)) {
+                    return;
+                }
+
+                size_t sleeping = ctx.sleeping_threads.fetch_add(1, std::memory_order_acquire) + 1;
+                if (sleeping == thread_count && ctx.tasks_available.load(std::memory_order_acquire) == 0) {
+                    // Everyone is asleep and no tasks! Deadlock/Stall detected!
+                    // Or a normal completion race condition where notify_all was missed.
+                    ctx.tasks_available.store(std::numeric_limits<size_t>::max(), std::memory_order_release);
+                    ctx.tasks_available.notify_all();
+                    ctx.sleeping_threads.fetch_sub(1, std::memory_order_release);
+                    return;
+                }
+
+                ctx.tasks_available.wait(curr, std::memory_order_acquire);
+                ctx.sleeping_threads.fetch_sub(1, std::memory_order_release);
+            }
+        }
+
+#if FF_cbe__heterogenous_core_affinity
+        if (task.estimate > TUNABLE_HEAVY_THRESHOLD) {
+            setpriority(PRIO_PROCESS, 0, -5); // Hint: P-core
+        } else {
+            setpriority(PRIO_PROCESS, 0, 5);  // Hint: E-core
+        }
+#endif
+
+        int result = process_step(task.node_idx, ctx, stat_cache, is_tty);
+
+#if FF_cbe__heterogenous_core_affinity
+        setpriority(PRIO_PROCESS, 0, 0); // Reset to default
+#endif
+
+        if (result != 0) {
+            ctx.error_occurred.store(true, std::memory_order_release);
+            if (!config.keep_going) {
+                ctx.completed_count.store(ctx.total_nodes, std::memory_order_release);
+                ctx.tasks_available.store(std::numeric_limits<size_t>::max(), std::memory_order_release);
+                ctx.tasks_available.notify_all(); // wake up everyone to exit
+            } else {
+                size_t prev_completed = ctx.completed_count.fetch_add(1, std::memory_order_release);
+                if (prev_completed + 1 == ctx.total_nodes) {
+                    ctx.tasks_available.store(std::numeric_limits<size_t>::max(), std::memory_order_release);
+                    ctx.tasks_available.notify_all();
+                }
+            }
+        } else {
+            size_t prev_completed = ctx.completed_count.fetch_add(1, std::memory_order_release);
+            const auto &node = ctx.build_graph.nodes()[task.node_idx];
+            for (size_t neighbor : node.out_edges) {
+                if (ctx.in_degrees[neighbor].fetch_sub(1, std::memory_order_acq_rel) == 1) {
+                    push_ready(neighbor, ctx);
+                }
+            }
+            if (prev_completed + 1 == ctx.total_nodes) {
+                ctx.tasks_available.store(std::numeric_limits<size_t>::max(), std::memory_order_release);
+                ctx.tasks_available.notify_all(); // wake up everyone to exit
+            }
+        }
+    }
+}
+
+/**
+ * @brief Executes the build.
+ *
+ * Initializes the execution context, resolves dependencies to identify initial ready tasks,
+ * spawns worker threads, and coordinates the completion state of the build.
+ *
+ * @return Success or error.
+ */
+Result<void> Executor::execute() {
+    pool.clear(); // Ensure clean state
+
+    catalyst::BuildGraph build_graph = builder.emit_graph();
+
+    // If graph is empty
+    if (build_graph.nodes().empty())
+        return {};
+
+    ExecuteContext ctx(
+        build_graph.nodes().size(),
+        builder.getDefinitionOf<std::vector<std::string>>("cc"),
+        builder.getDefinitionOf<std::vector<std::string>>("cxx"),
+        builder.getDefinitionOf<std::vector<std::string>>("cflags"),
+        builder.getDefinitionOf<std::vector<std::string>>("cxxflags"),
+        builder.getDefinitionOf<std::vector<std::string>>("ldflags"),
+        builder.getDefinitionOf<std::vector<std::string>>("ldlibs"),
+        std::move(build_graph)
+    );
+
+    // Build initial in-degrees in a thread-safe atomic vector
+    std::vector<int> temp_in_degrees(ctx.total_nodes, 0);
+    for (const auto &node : ctx.build_graph.nodes()) {
+        for (size_t out : node.out_edges) {
+            temp_in_degrees[out]++;
+        }
+    }
+    for (size_t i = 0; i < ctx.in_degrees.size(); ++i) {
+        ctx.in_degrees[i].store(temp_in_degrees[i], std::memory_order_relaxed);
+    }
+
+    // Pre-sort the initial root tasks to preserve Longest Processing Time first (LPT) scheduling
+    std::vector<ExecuteContext::Task> initial_tasks;
+    for (size_t i = 0; i < ctx.in_degrees.size(); ++i) {
+        if (ctx.in_degrees[i].load(std::memory_order_relaxed) == 0) {
+            size_t est = 0;
+#if FF_cbe__estimates
+            const auto &node = ctx.build_graph.nodes()[i];
+            if (node.step_id.has_value()) {
+                est = estimator->getWorkEstimate(ctx.build_graph.steps()[*node.step_id].output);
+            }
+#endif
+            initial_tasks.push_back({.node_idx = i, .estimate = est});
+        }
+    }
+    std::ranges::sort(initial_tasks, [](const ExecuteContext::Task &a, const ExecuteContext::Task &b) {
+        return a.estimate > b.estimate;
+    });
+    for (const auto &task : initial_tasks) {
+        ctx.ready_queue.enqueue(task);
+        ctx.tasks_available.fetch_add(1, std::memory_order_release);
+    }
+
+    StatCache stat_cache;
     bool is_tty = ::isatty(STDOUT_FILENO) != 0;
 
 #if FF_cbe__logging
@@ -388,313 +779,19 @@ Result<void> Executor::execute() {
 #endif
 
     // Pre-count steps that need rebuilding and find final output target
-    size_t steps_to_build = 0;
     std::string final_output_name;
-    for (size_t i = 0; i < build_graph.nodes().size(); ++i) {
-        const auto &node = build_graph.nodes()[i];
+    for (size_t i = 0; i < ctx.total_nodes; ++i) {
+        const auto &node = ctx.build_graph.nodes()[i];
         if (node.step_id.has_value()) {
-            const auto &step = build_graph.steps()[*node.step_id];
+            const auto &step = ctx.build_graph.steps()[*node.step_id];
             if (needs_rebuild(step, stat_cache)) {
-                steps_to_build++;
+                ctx.steps_to_build++;
             }
             if (node.out_edges.empty()) {
                 final_output_name = step.output;
             }
         }
     }
-    std::atomic<size_t> steps_completed = 0;
-
-    // If graph is empty
-    if (total_nodes == 0)
-        return {};
-
-    auto build_command_args = [&](const BuildStep &step, bool dry_run_mode) -> std::vector<std::string> {
-        std::vector<std::string> args;
-        static constexpr auto ARGS_VEC_INIT_SZ = 40;
-        args.reserve(ARGS_VEC_INIT_SZ);
-
-        auto add_parts = [&args](const auto &parts) {
-            args.reserve(args.size() + parts.size());
-            for (const auto &part : parts) {
-                if (part.begin() != part.end()) {
-                    args.push_back(std::ranges::to<std::string>(part));
-                }
-            }
-        };
-
-        const auto &inputs = step.parsed_inputs;
-
-        if (step.tool == "cc") {
-            add_parts(cc_vec);
-            add_parts(cflags_vec);
-            args.insert(args.end(), {"-MMD", "-MF", std::string(step.output) + ".d", "-c"});
-            for (const auto &in : inputs)
-                args.emplace_back(in);
-            args.emplace_back("-o");
-            args.emplace_back(step.output);
-        } else if (step.tool == "cxx") {
-            add_parts(cxx_vec);
-            add_parts(cxxflags_vec);
-            args.insert(args.end(), {"-MMD", "-MF", std::string(step.output) + ".d", "-c"});
-            for (const auto &in : inputs)
-                args.emplace_back(in);
-            args.emplace_back("-o");
-            args.emplace_back(step.output);
-        } else if (step.tool == "ld") {
-            add_parts(cxx_vec);
-            static constexpr auto TUNABLE_INPUT_SZ = 50;
-            std::filesystem::path rsp_path = std::filesystem::path(step.output).replace_extension(".rsp");
-
-            bool use_rsp = false;
-            if (std::filesystem::exists(rsp_path) && isNewer(rsp_path, config.build_file)) {
-                use_rsp = true;
-            } else if (inputs.size() > TUNABLE_INPUT_SZ) {
-                use_rsp = true;
-                if (!dry_run_mode) {
-                    std::string rsp_content;
-                    constexpr auto TUNABLE_RSP_PATH_ESTIMATE = 100;
-                    rsp_content.reserve(inputs.size() * TUNABLE_RSP_PATH_ESTIMATE);
-                    for (const auto &input : inputs) {
-                        rsp_content += input;
-                        rsp_content += '\n';
-                    }
-                    std::ofstream rsp_file(rsp_path);
-                    rsp_file.write(rsp_content.data(), static_cast<long>(rsp_content.size()));
-                }
-            }
-
-            if (use_rsp) {
-                args.push_back(std::string("@") + rsp_path.string());
-            } else {
-                for (const auto &in : inputs)
-                    args.emplace_back(in);
-            }
-            args.emplace_back("-o");
-            args.emplace_back(step.output);
-            add_parts(ldflags_vec);
-            add_parts(ldlibs_vec);
-        } else if (step.tool == "ar") {
-            args.insert(args.end(), {"ar", "rcs", std::string(step.output)});
-            for (const auto &in : inputs)
-                args.emplace_back(in);
-        } else if (step.tool == "sld") {
-            add_parts(cxx_vec);
-            args.emplace_back("-shared");
-            for (const auto &in : inputs)
-                args.emplace_back(in);
-            args.emplace_back("-o");
-            args.emplace_back(step.output);
-        }
-        return args;
-    };
-
-    auto print_message = [&](const BuildStep &step) {
-        if (config.silent) {
-            return;
-        }
-
-        std::lock_guard lock(cout_tty_mtx);
-
-        std::string raw_action = std::string(step.tool);
-        std::string target = std::string(step.output);
-
-        if (step.tool == "cc" || step.tool == "cxx") {
-            raw_action = "Compiling";
-            if (!step.parsed_inputs.empty()) {
-                target = std::string(step.parsed_inputs[0]);
-            }
-        } else if (step.tool == "ld") {
-            raw_action = "Linking";
-        } else if (step.tool == "sld") {
-            raw_action = "Linking library";
-        } else if (step.tool == "ar") {
-            raw_action = "Archiving";
-        }
-
-        std::string action;
-        if (is_tty) {
-            std::string color_code;
-            if (step.tool == "cc" || step.tool == "cxx") {
-                color_code = "\033[36m"; // Cyan
-            } else if (step.tool == "ld") {
-                color_code = "\033[32m"; // Green
-            } else if (step.tool == "sld") {
-                color_code = "\033[35m"; // Magenta
-            } else if (step.tool == "ar") {
-                color_code = "\033[33m"; // Yellow
-            }
-
-            // Pad the raw action name first, then wrap in color codes to ensure perfect TTY alignment
-            std::string padded = std::format("{:<15}", raw_action);
-            if (!color_code.empty()) {
-                action = std::format("{}{}\033[0m", color_code, padded);
-            } else {
-                action = padded;
-            }
-        } else {
-            action = raw_action;
-        }
-
-        if (config.dry_run) {
-            std::cout << "[DRY RUN] " << action << " " << target << std::endl;
-        } else {
-            auto current = steps_completed.fetch_add(1, std::memory_order_relaxed) + 1;
-            if (is_tty) {
-                std::print("\r\033[K[{}/{}] {} {}", current, steps_to_build, action, target);
-                std::cout.flush();
-            } else {
-                std::println("[{}/{}] {:<15} {}", current, steps_to_build, action, target);
-            }
-        }
-    };
-
-    auto process_step = [&](size_t node_idx) {
-        // NOLINTBEGIN(performance-avoid-endl)
-        const auto &node = build_graph.nodes()[node_idx];
-        if (node.step_id.has_value()) {
-            const auto &step = build_graph.steps()[*node.step_id];
-
-            if (needs_rebuild(step, stat_cache)) {
-                print_message(step);
-                if (config.dry_run)
-                    return 0;
-
-                auto args = build_command_args(step, false);
-
-#if FF_cbe__profiling
-                auto start = std::chrono::steady_clock::now();
-#endif
-#if FF_cbe__logging
-                bool capture_output = !config.build_log_file.empty();
-#else
-                bool capture_output = false;
-#endif
-                auto res = catalyst::process_exec(std::move(args), std::nullopt, std::nullopt, capture_output);
-#if FF_cbe__profiling
-                auto end = std::chrono::steady_clock::now();
-                std::chrono::duration<double> diff = end - start;
-                {
-                    std::lock_guard lock(cout_tty_mtx);
-                    std::println("Step {} took {:.4f}s", step.output, diff.count());
-                }
-#endif
-
-                if (res) {
-                    auto [ec, output] = *res;
-#if FF_cbe__logging
-                    if (capture_output && !output.empty()) {
-                        std::lock_guard lock(cout_tty_mtx);
-                        if (!config.silent || ec != 0) {
-                            std::print("{}", output);
-                        }
-
-                        std::ofstream log_file(config.build_log_file, std::ios_base::app);
-                        if (log_file) {
-                            log_file << "=== " << step.tool << " -> " << step.output << " ===\n";
-                            log_file << output;
-                            if (output.back() != '\n') {
-                                log_file << '\n';
-                            }
-                            log_file << '\n';
-                        }
-                    }
-#endif
-                    if (ec != 0) {
-                        std::println(stderr, "Build failed: {} -> {} (exit code {})", step.tool, step.output, ec);
-                        return ec;
-                    }
-                } else {
-                    std::println(stderr, "Failed to execute: {}", res.error());
-                    return 1;
-                }
-            }
-#if FF_cbe__logging
-            else {
-                std::lock_guard lock(cout_tty_mtx);
-                std::println("Skipping {} (up to date)", step.output);
-            }
-#endif
-        }
-        return 0;
-        // NOLINTEND(performance-avoid-endl)
-    };
-
-    auto worker = [&]() {
-        while (true) {
-            Task task;
-            {
-                std::unique_lock lock(mtx);
-                cv_ready.wait(lock, [&] {
-                    return !ready_queue.empty() || completed_count == total_nodes || active_workers == 0; //
-                });
-
-                if (ready_queue.empty()) {
-                    if (completed_count == total_nodes)
-                        return;
-                    // If queue is empty and no active workers, but work not done -> Cycle
-                    return;
-                }
-
-                task = ready_queue.top();
-                ready_queue.pop();
-                active_workers++;
-            }
-
-#if FF_cbe__heterogenous_core_affinity
-            if (task.estimate > TUNABLE_HEAVY_THRESHOLD) {
-                setpriority(PRIO_PROCESS, 0, -5); // Hint: P-core
-            } else {
-                setpriority(PRIO_PROCESS, 0, 5);  // Hint: E-core
-            }
-#endif
-
-            int result = process_step(task.node_idx);
-
-#if FF_cbe__heterogenous_core_affinity
-            setpriority(PRIO_PROCESS, 0, 0); // Reset to default
-#endif
-
-            {
-                std::lock_guard lock(mtx);
-                active_workers--;
-
-                size_t new_work_count = 0;
-
-                if (result != 0) {
-                    error_occurred = true;
-                    if (!config.keep_going) {
-                        completed_count = total_nodes; // Force exit
-                    } else {
-                        completed_count.fetch_add(1, std::memory_order_relaxed);
-                    }
-                } else {
-                    completed_count.fetch_add(1, std::memory_order_relaxed);
-                    const auto &node = build_graph.nodes()[task.node_idx];
-                    for (size_t neighbor : node.out_edges) {
-                        in_degrees[neighbor]--;
-                        if (in_degrees[neighbor] == 0) {
-                            push_ready(neighbor);
-                            new_work_count++;
-                        }
-                    }
-                }
-
-                bool build_finished = (completed_count == total_nodes);
-                bool stall_detected = (active_workers == 0);
-                constexpr auto TUNABLE_NOTIFY_ALL_CRITERIA = 10;
-                if (build_finished || error_occurred || stall_detected ||
-                    new_work_count >= TUNABLE_NOTIFY_ALL_CRITERIA) {
-                    cv_ready.notify_all();
-                } else if (new_work_count == 1) {
-                    cv_ready.notify_one();
-                } else {
-                    for (size_t ii = 0; ii < new_work_count; ++ii) {
-                        cv_ready.notify_one();
-                    }
-                }
-            }
-        }
-    };
 
     size_t thread_count = config.jobs;
     if (thread_count == 0)
@@ -703,20 +800,22 @@ Result<void> Executor::execute() {
         thread_count = 1;
 
     for (size_t i = 0; i < thread_count; ++i) {
-        pool.emplace_back(worker);
+        pool.emplace_back([this, &ctx, &stat_cache, is_tty, thread_count]() {
+            this->worker_loop(ctx, stat_cache, is_tty, thread_count);
+        });
     }
 
     pool.clear(); // Join all threads
 
-    if (error_occurred) {
-        if (!config.silent && is_tty && steps_completed > 0) {
+    if (ctx.error_occurred) {
+        if (!config.silent && is_tty && ctx.steps_completed > 0) {
             std::print("\n");
         }
         return std::unexpected("Build Failed");
     }
 
-    if (completed_count != total_nodes) {
-        if (!config.silent && is_tty && steps_completed > 0) {
+    if (ctx.completed_count != ctx.total_nodes) {
+        if (!config.silent && is_tty && ctx.steps_completed > 0) {
             std::print("\n");
         }
         return std::unexpected("Cycle detected: Build stalled with pending nodes.");
@@ -747,5 +846,6 @@ Result<void> Executor::execute() {
 
     return {};
 }
+
 
 } // namespace catalyst

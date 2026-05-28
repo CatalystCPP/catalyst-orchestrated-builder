@@ -111,7 +111,14 @@ public:
     Result<void> emit_commands();
 
 private:
+    struct ExecuteContext; // Forward declaration
+
     bool needs_rebuild(const BuildStep &step, StatCache &stat_cache) const;
+    std::vector<std::string> build_command_args(const BuildStep &step, bool dry_run_mode) const;
+    void print_message(const BuildStep &step, ExecuteContext& ctx, bool is_tty) const;
+    int process_step(size_t node_idx, ExecuteContext& ctx, StatCache& stat_cache, bool is_tty) const;
+    void worker_loop(ExecuteContext& ctx, StatCache& stat_cache, bool is_tty, size_t thread_count);
+    void push_ready(size_t idx, ExecuteContext& ctx);
 
     CBEBuilder builder;
     ExecutorConfig config;
