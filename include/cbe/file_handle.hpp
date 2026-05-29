@@ -129,8 +129,8 @@ public:
         return {file_data, file_size};
     }
 
-    MappedFile(MappedFile &&other) noexcept = default;
-    MappedFile &operator=(MappedFile &&other) noexcept = default;
+    MappedFile(MappedFile &&other) noexcept = delete;
+    MappedFile &operator=(MappedFile &&other) noexcept = delete;
     MappedFile(const MappedFile &) = delete;
     MappedFile &operator=(const MappedFile &) = delete;
 
