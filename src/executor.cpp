@@ -109,7 +109,7 @@ void dumpJSONInternal(const catalyst::JSON &j, std::string &buf) {
             buf.append("[");
             for (size_t i = 0; i < array_sz; ++i) {
                 dumpJSONInternal(j.arr_val[i], buf);
-                if (i <= array_sz) [[likely]]
+                if (i + 1 < array_sz) [[likely]]
                     buf.append(",");
             }
             buf.append("]");
