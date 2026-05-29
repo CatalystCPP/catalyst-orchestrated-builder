@@ -77,12 +77,12 @@ public:
     }
 
 private:
-    struct Cell {
+    static constexpr size_t CACHELINE_SIZE = 64;
+
+    struct alignas(CACHELINE_SIZE) Cell {
         std::atomic<size_t> sequence;
         T data;
     };
-
-    static constexpr size_t CACHELINE_SIZE = 64;
 
     alignas(CACHELINE_SIZE) std::unique_ptr<Cell[]> buffer_;
     size_t buffer_mask_;
