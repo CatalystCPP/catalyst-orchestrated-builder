@@ -483,7 +483,7 @@ struct Executor::ExecuteContext {
  * response (.rsp) files for linking steps with many inputs to avoid command-line
  * length limits.
  */
-std::vector<std::string> Executor::build_command_args(const BuildStep &step, bool dry_run_mode) const {
+std::vector<std::string> Executor::build_command_args(const BuildStep &step, bool dry_run_mode, const ExecuteContext &ctx) const {
     std::vector<std::string> args;
     static constexpr auto ARGS_VEC_INIT_SZ = 40;
     args.reserve(ARGS_VEC_INIT_SZ);
@@ -500,23 +500,23 @@ std::vector<std::string> Executor::build_command_args(const BuildStep &step, boo
     const auto &inputs = step.parsed_inputs;
 
     if (step.tool == "cc") {
-        add_parts(builder.getDefinitionOf<std::vector<std::string>>("cc"));
-        add_parts(builder.getDefinitionOf<std::vector<std::string>>("cflags"));
+        add_parts(ctx.cc_vec);
+        add_parts(ctx.cflags_vec);
         args.insert(args.end(), {"-MMD", "-MF", std::string(step.output) + ".d", "-c"});
         for (const auto &in : inputs)
             args.emplace_back(in);
         args.emplace_back("-o");
         args.emplace_back(step.output);
     } else if (step.tool == "cxx") {
-        add_parts(builder.getDefinitionOf<std::vector<std::string>>("cxx"));
-        add_parts(builder.getDefinitionOf<std::vector<std::string>>("cxxflags"));
+        add_parts(ctx.cxx_vec);
+        add_parts(ctx.cxxflags_vec);
         args.insert(args.end(), {"-MMD", "-MF", std::string(step.output) + ".d", "-c"});
         for (const auto &in : inputs)
             args.emplace_back(in);
         args.emplace_back("-o");
         args.emplace_back(step.output);
     } else if (step.tool == "ld") {
-        add_parts(builder.getDefinitionOf<std::vector<std::string>>("cxx"));
+        add_parts(ctx.cxx_vec);
         static constexpr auto TUNABLE_INPUT_SZ = 50;
         std::filesystem::path rsp_path = std::filesystem::path(step.output).replace_extension(".rsp");
 
@@ -546,14 +546,14 @@ std::vector<std::string> Executor::build_command_args(const BuildStep &step, boo
         }
         args.emplace_back("-o");
         args.emplace_back(step.output);
-        add_parts(builder.getDefinitionOf<std::vector<std::string>>("ldflags"));
-        add_parts(builder.getDefinitionOf<std::vector<std::string>>("ldlibs"));
+        add_parts(ctx.ldflags_vec);
+        add_parts(ctx.ldlibs_vec);
     } else if (step.tool == "ar") {
         args.insert(args.end(), {"ar", "rcs", std::string(step.output)});
         for (const auto &in : inputs)
             args.emplace_back(in);
     } else if (step.tool == "sld") {
-        add_parts(builder.getDefinitionOf<std::vector<std::string>>("cxx"));
+        add_parts(ctx.cxx_vec);
         args.emplace_back("-shared");
         for (const auto &in : inputs)
             args.emplace_back(in);
@@ -667,7 +667,7 @@ int Executor::process_step(size_t node_idx, ExecuteContext &ctx, StatCache &stat
             if (config.dry_run)
                 return 0;
 
-            auto args = build_command_args(step, false);
+            auto args = build_command_args(step, false, ctx);
 
 #if FF_cbe__profiling
             auto start = std::chrono::steady_clock::now();
