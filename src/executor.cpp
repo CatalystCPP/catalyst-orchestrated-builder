@@ -1,7 +1,7 @@
 #include "cbe/executor.hpp"
 
 #include "cbe/builder.hpp"
-#include "cbe/domain.hpp"
+#include "cbe/build_step.hpp"
 #include "cbe/json.hpp"
 #include "cbe/mpmc_queue.hpp"
 #include "cbe/mpsc_queue.hpp"

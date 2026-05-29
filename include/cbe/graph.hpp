@@ -1,6 +1,6 @@
 #pragma once
 
-#include "cbe/domain.hpp"
+#include "cbe/build_step.hpp"
 #include "cbe/utility.hpp"
 
 #include <filesystem>

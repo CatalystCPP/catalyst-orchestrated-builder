@@ -1,6 +1,6 @@
 #include "cbe/graph.hpp"
 
-#include "cbe/domain.hpp"
+#include "cbe/build_step.hpp"
 #include "cbe/file_handle.hpp"
 #include "cbe/utility.hpp"
 
