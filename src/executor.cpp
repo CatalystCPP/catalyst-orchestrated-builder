@@ -577,7 +577,12 @@ void Executor::push_ready(size_t idx, ExecuteContext &ctx) {
         est = estimator->getWorkEstimate(ctx.build_graph.steps()[*node.step_id].output);
     }
 #endif
+#ifdef DEBUG
+    bool enqueued = ctx.ready_queue.enqueue({.node_idx = idx, .estimate = est});
+    assert(enqueued && "Invariant violated: ready_queue overflow");
+#else
     ctx.ready_queue.enqueue({.node_idx = idx, .estimate = est});
+#endif
     ctx.tasks_available.fetch_add(1, std::memory_order_release);
     ctx.tasks_available.notify_one();
 }
@@ -893,7 +898,12 @@ Result<void> Executor::execute() {
         return a.estimate > b.estimate;
     });
     for (const auto &task : initial_tasks) {
+#ifdef DEBUG
+        bool enqueued = ctx.ready_queue.enqueue(task);
+        assert(enqueued && "Invariant violated: ready_queue overflow during initialization");
+#else
         ctx.ready_queue.enqueue(task);
+#endif
         ctx.tasks_available.fetch_add(1, std::memory_order_release);
     }
 
