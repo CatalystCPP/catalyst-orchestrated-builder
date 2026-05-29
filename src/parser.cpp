@@ -43,7 +43,8 @@ Result<void> parse_step(const std::string_view line, CBEBuilder &builder) {
     Result<void> res = builder.add_step({.tool = line.substr(0, first_pipe),
                                          .inputs = line.substr(first_pipe + 1, second_pipe - (first_pipe + 1)),
                                          .output = line.substr(second_pipe + 1),
-                                         .depfile_inputs = std::nullopt,
+                                         .opaque_inputs = {},
+                                         .depfile_inputs = {},
                                          .parsed_inputs = {}});
     if (!res) {
         return std::unexpected(res.error());

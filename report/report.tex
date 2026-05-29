@@ -219,8 +219,8 @@ struct BuildStep {
     std::string_view tool;
     std::string_view inputs;   // raw, comma-separated
     std::string_view output;
-    std::optional<std::vector<std::string_view>> opaque_inputs;
-    std::optional<std::vector<std::string_view>> depfile_inputs;
+    catalyst::optional_vector<std::string_view> opaque_inputs;
+    catalyst::optional_vector<std::string_view> depfile_inputs;
     std::vector<std::string_view> parsed_inputs;
 };
 \end{lstlisting}

@@ -1,8 +1,9 @@
 #include "cbe/binary.hpp"
 
 #include "cbe/builder.hpp"
-#include "cbe/graph.hpp"
 #include "cbe/file_handle.hpp"
+#include "cbe/graph.hpp"
+#include "cbe/optional_vector.hpp"
 
 #include <array>
 #include <cstdint>
@@ -33,7 +34,7 @@ public:
         uint64_t offset = buffer_data.size();
         uint64_t len = sv.size();
         buffer_data.append(sv);
-        StringRef ref = {.offset=offset, .len=len};
+        StringRef ref = {.offset = offset, .len = len};
         buffer_cache[sv] = ref;
         return ref;
     }
@@ -47,7 +48,7 @@ private:
     std::unordered_map<std::string_view, StringRef> buffer_cache;
 };
 
- constexpr size_t BIN_HEADER_MAGIC_BIT_LEN = 8;
+constexpr size_t BIN_HEADER_MAGIC_BIT_LEN = 8;
 
 struct BinHeader {
     std::array<char, BIN_HEADER_MAGIC_BIT_LEN> magic;
@@ -123,7 +124,7 @@ Result<void> parse_bin(CBEBuilder &builder) {
         }
 
         std::string_view path = get_sv(path_ref);
-        builder.graph_.nodes_.push_back({path, std::move(out_edges), step_id});
+        builder.graph_.nodes_.push_back({.path = path, .out_edges = std::move(out_edges), .step_id = step_id});
         builder.graph_.index_.emplace(path, i);
     }
 
@@ -139,19 +140,18 @@ Result<void> parse_bin(CBEBuilder &builder) {
         uint64_t depfile_count = *reinterpret_cast<const uint64_t *>(ptr);
         ptr += sizeof(uint64_t);
 
-        std::optional<std::vector<std::string_view>> depfile_inputs;
+        catalyst::optional_vector<std::string_view> depfile_inputs;
         if (depfile_count != UINT64_MAX) {
-            depfile_inputs.emplace();
-            depfile_inputs->reserve(depfile_count);
+            depfile_inputs.reserve(depfile_count);
             for (uint64_t j = 0; j < depfile_count; ++j) {
                 StringRef ref = *reinterpret_cast<const StringRef *>(ptr);
                 ptr += sizeof(StringRef);
-                depfile_inputs->push_back(get_sv(ref));
+                depfile_inputs.push_back(get_sv(ref));
             }
         }
 
         std::vector<std::string_view> parsed_inputs;
-        std::optional<std::vector<std::string_view>> opaque_inputs;
+        catalyst::optional_vector<std::string_view> opaque_inputs;
         std::string_view remaining = get_sv(inputs_ref);
         while (!remaining.empty()) {
             size_t comma_pos = remaining.find(',');
@@ -165,22 +165,19 @@ Result<void> parse_bin(CBEBuilder &builder) {
             }
             if (!in_path.empty()) {
                 if (in_path.starts_with('!')) {
-                    if (!opaque_inputs) {
-                        opaque_inputs.emplace();
-                    }
-                    opaque_inputs->push_back(in_path.substr(1));
+                    opaque_inputs.push_back(in_path.substr(1));
                 } else {
                     parsed_inputs.push_back(in_path);
                 }
             }
         }
 
-        builder.graph_.steps_.push_back({get_sv(tool_ref),
-                                         get_sv(inputs_ref),
-                                         get_sv(output_ref),
-                                         std::move(opaque_inputs),
-                                         std::move(depfile_inputs),
-                                         std::move(parsed_inputs)});
+        builder.graph_.steps_.push_back({.tool = get_sv(tool_ref),
+                                         .inputs = get_sv(inputs_ref),
+                                         .output = get_sv(output_ref),
+                                         .opaque_inputs = std::move(opaque_inputs),
+                                         .depfile_inputs = std::move(depfile_inputs),
+                                         .parsed_inputs = std::move(parsed_inputs)});
     }
 
     builder.add_resource(file);
@@ -200,7 +197,7 @@ Result<void> emit_bin(CBEBuilder &builder) {
 
     std::vector<BinDefinition> bin_defs;
     for (const auto &[k, v] : definitions) {
-        bin_defs.push_back({sb.add(k), sb.add(v)});
+        bin_defs.push_back({.key = sb.add(k), .val = sb.add(v)});
     }
 
     // Nodes and steps are variable length, we'll write them in two passes or buffer.
@@ -246,13 +243,13 @@ Result<void> emit_bin(CBEBuilder &builder) {
                          reinterpret_cast<const char *>(&output_ref),
                          reinterpret_cast<const char *>(&output_ref) + sizeof(StringRef));
 
-        uint64_t depfile_count = step.depfile_inputs ? step.depfile_inputs->size() : UINT64_MAX;
+        uint64_t depfile_count = step.depfile_inputs.has_value() ? step.depfile_inputs.size() : UINT64_MAX;
         steps_buf.insert(steps_buf.end(),
                          reinterpret_cast<const char *>(&depfile_count),
                          reinterpret_cast<const char *>(&depfile_count) + sizeof(uint64_t));
 
-        if (step.depfile_inputs) {
-            for (const auto &di : *step.depfile_inputs) {
+        if (step.depfile_inputs.has_value()) {
+            for (const auto &di : step.depfile_inputs) {
                 StringRef ref = sb.add(di);
                 steps_buf.insert(steps_buf.end(),
                                  reinterpret_cast<const char *>(&ref),

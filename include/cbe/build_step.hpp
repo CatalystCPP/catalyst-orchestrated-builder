@@ -1,5 +1,7 @@
 #pragma once
 
+#include "cbe/optional_vector.hpp"
+
 #include <optional>
 #include <string_view>
 #include <unordered_map>
@@ -26,12 +28,12 @@ struct BuildStep {
      * @brief Inputs that are not explicitly parsed but affect the build.
      * Often used for order-only dependencies or implicit system dependencies.
      */
-    std::optional<std::vector<std::string_view>> opaque_inputs = std::nullopt;
+    catalyst::optional_vector<std::string_view> opaque_inputs;
 
     /**
      * @brief Inputs discovered dynamically from a dependency file (e.g., .d files from GCC/Clang).
      */
-    std::optional<std::vector<std::string_view>> depfile_inputs = std::nullopt;
+    catalyst::optional_vector<std::string_view> depfile_inputs;
 
     /** @brief List of explicit input file paths parsed from the `inputs` string. */
     std::vector<std::string_view> parsed_inputs;

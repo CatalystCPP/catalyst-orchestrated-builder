@@ -265,14 +265,14 @@ bool inline Executor::needs_rebuild(const BuildStep &step, StatCache &stat_cache
     }
 
     if (step.depfile_inputs.has_value()) {
-        for (const auto &dep : *step.depfile_inputs) {
+        for (const auto &dep : step.depfile_inputs) {
             if (stat_cache.changed_since(std::filesystem::path(dep), output_modtime)) {
                 return true;
             }
         }
     }
     if (step.opaque_inputs.has_value()) {
-        for (const auto &opaque : *step.opaque_inputs) {
+        for (const auto &opaque : step.opaque_inputs) {
             if (stat_cache.changed_since(std::filesystem::path(opaque), output_modtime)) {
                 return true;
             }

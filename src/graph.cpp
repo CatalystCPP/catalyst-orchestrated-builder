@@ -157,41 +157,39 @@ Result<size_t> BuildGraph::add_step(BuildStep step) {
 
         if (in_path.starts_with('!')) {
             auto opaque_path = in_path.substr(1);
-            if (!step.opaque_inputs)
-                step.opaque_inputs.emplace();
-            step.opaque_inputs->push_back(opaque_path);
+            step.opaque_inputs.push_back(opaque_path);
         } else {
             step.parsed_inputs.push_back(in_path);
         }
     }
 
     size_t step_id = steps_.size();
-    steps_.push_back(step); // Store the step
+    steps_.push_back(std::move(step)); // Store the step
     nodes_[out_id].step_id = step_id;
 
-    if (step.tool == "cc" || step.tool == "cxx") {
-        auto depfile_parse_callback = [this, out_id, &step = steps_.back()](std::string_view fn) {
+    auto &live_step = steps_.back();
+
+    if (live_step.tool == "cc" || live_step.tool == "cxx") {
+        auto depfile_parse_callback = [this, out_id, &step = live_step](std::string_view fn) {
             size_t in_id = get_or_create_node(fn);
             this->nodes_[in_id].out_edges.push_back(out_id);
-            if (!step.depfile_inputs)
-                step.depfile_inputs.emplace();
-            step.depfile_inputs->emplace_back(fn);
+            step.depfile_inputs.emplace_back(fn);
         };
-        const fs::path depfile_path = std::format("{}.d", step.output);
+        const fs::path depfile_path = std::format("{}.d", live_step.output);
         parseDepfile(*this, depfile_path, depfile_parse_callback);
-    } else if (step.tool == "ld" || step.tool == "sld" || step.tool == "ar") {
+    } else if (live_step.tool == "ld" || live_step.tool == "sld" || live_step.tool == "ar") {
         // TODO: parse .rsp file
     }
 
     // Iterate over parsed_inputs to add edges
-    for (const auto &in_path : step.parsed_inputs) {
+    for (const auto &in_path : live_step.parsed_inputs) {
         size_t in_id = get_or_create_node(in_path);
         nodes_[in_id].out_edges.push_back(out_id);
     }
 
     // Iterate over opaque_inputs to add edges
-    if (step.opaque_inputs) {
-        for (const auto &in_path : *step.opaque_inputs) {
+    if (live_step.opaque_inputs.has_value()) {
+        for (const auto &in_path : live_step.opaque_inputs) {
             size_t in_id = get_or_create_node(in_path);
             nodes_[in_id].out_edges.push_back(out_id);
         }
