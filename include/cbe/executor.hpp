@@ -48,6 +48,11 @@ public:
      * @return True if input is newer or stat failed, false otherwise.
      */
     bool changed_since(const std::filesystem::path &input, std::filesystem::file_time_type output_time);
+
+    /**
+     * @brief Returns the number of entries in the cache (primarily for unit tests).
+     */
+    size_t get_cache_size() const;
 };
 
 struct ExecutorConfig {

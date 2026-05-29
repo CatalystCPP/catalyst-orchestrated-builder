@@ -32,7 +32,7 @@ bool integration_test() {
         return false;
     }
 
-    Executor executor(std::move(builder));
+    Executor executor(std::move(builder), ExecutorConfig{});
     auto exec_res = executor.execute();
 
     if (!exec_res) {

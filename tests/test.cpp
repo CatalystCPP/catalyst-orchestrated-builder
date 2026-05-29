@@ -3,5 +3,5 @@
 #include <cassert>
 
 int main(int argc, char **argv) {
-    return !(integration_test() && opaque_deps_test());
+    return !(stat_cache_test() && integration_test());
 }

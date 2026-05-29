@@ -44,7 +44,7 @@ bool opaque_deps_test() {
     auto res = builder.add_step(std::move(step));
     assert(res);
 
-    Executor executor(std::move(builder));
+    Executor executor(std::move(builder), ExecutorConfig{});
 
     // First run
     std::println("First run...");
@@ -73,7 +73,7 @@ bool opaque_deps_test() {
     step2.output = "output.o";
     builder2.add_step(std::move(step2));
 
-    Executor executor2(std::move(builder2));
+    Executor executor2(std::move(builder2), ExecutorConfig{});
     std::println("Second run (should rebuild)...");
 
     // We need to capture if it actually ran the tool.
