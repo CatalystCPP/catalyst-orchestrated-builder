@@ -87,57 +87,61 @@ inline std::string escapeJSONString(std::string_view s) {
     return res;
 }
 
-[[clang::always_inline]]
-inline void dumpJSON(const catalyst::JSON &j, std::ostream &os, int indent = 0) {
+void dumpJSONInternal(const catalyst::JSON &j, std::string &buf) {
     switch (j.type) {
         case catalyst::JSON::Type::Null:
-            os << "null";
+            buf.append("null");
             break;
         case catalyst::JSON::Type::Boolean:
-            os << (j.bool_val ? "true" : "false");
+            buf.append(j.bool_val ? "true" : "false");
             break;
         case catalyst::JSON::Type::Number:
-            os << j.num_val;
+            buf.append(std::to_string(j.num_val));
             break;
         case catalyst::JSON::Type::String:
-            os << escapeJSONString(j.str_val);
+            buf.append(escapeJSONString(j.str_val));
             break;
         case catalyst::JSON::Type::Array: {
-            if (j.arr_val.empty()) {
-                os << "[]";
+            const size_t array_sz = j.arr_val.size();
+            if (array_sz == 0) {
+                buf.append("[]");
                 break;
             }
-            os << "[\n";
-            for (size_t i = 0; i < j.arr_val.size(); ++i) {
-                os << std::string(indent + 4, ' ');
-                dumpJSON(j.arr_val[i], os, indent + 4);
-                if (i + 1 < j.arr_val.size()) {
-                    os << ",";
-                }
-                os << "\n";
+            buf.append("[");
+            for (size_t i = 0; i < array_sz; ++i) {
+                dumpJSONInternal(j.arr_val[i], buf);
+                if (i <= array_sz) [[likely]]
+                    buf.append(",");
             }
-            os << std::string(indent, ' ') << "]";
+            buf.append("]");
             break;
         }
         case catalyst::JSON::Type::Object: {
             if (j.obj_val.empty()) {
-                os << "{}";
+                buf.append("{}");
                 break;
             }
-            os << "{\n";
+            buf.append("{");
             size_t i = 0;
             for (auto it = j.obj_val.begin(); it != j.obj_val.end(); ++it, ++i) {
-                os << std::string(indent + 4, ' ') << escapeJSONString(it->first) << ": ";
-                dumpJSON(it->second, os, indent + 4);
+                buf.append(escapeJSONString(it->first));
+                buf.append(":");
+                dumpJSONInternal(it->second, buf);
                 if (i + 1 < j.obj_val.size()) {
-                    os << ",";
+                    buf.append(",");
                 }
-                os << "\n";
             }
-            os << std::string(indent, ' ') << "}";
+            buf.append("}");
             break;
         }
     }
+}
+
+void dumpJSON(const catalyst::JSON &j, std::ofstream &os) {
+    std::string buf;
+    buf.reserve(1 << 20);
+    dumpJSONInternal(j, buf);
+    os.write(buf.data(), static_cast<long>(buf.size()));
 }
 
 void writeCompdb(const catalyst::JSON &compdb, std::ofstream &out) {
@@ -640,7 +644,8 @@ void Executor::print_message(const BuildStep &step, ExecuteContext &ctx, bool is
         }
     }
 
-    while (!ctx.progress_queue.enqueue({msg, "", false, false}))
+    while (!ctx.progress_queue.enqueue(
+        {.console_message = msg, .log_message = "", .is_error = false, .is_poison_pill = false}))
         std::this_thread::yield();
     ctx.messages_enqueued.fetch_add(1, std::memory_order_release);
     ctx.messages_enqueued.notify_one();
@@ -714,7 +719,8 @@ int Executor::process_step(size_t node_idx, ExecuteContext &ctx, StatCache &stat
                 if (ec != 0) {
                     std::string err_msg =
                         std::format("Build failed: {} -> {} (exit code {})\n", step.tool, step.output, ec);
-                    while (!ctx.progress_queue.enqueue({err_msg, "", true, false}))
+                    while (!ctx.progress_queue.enqueue(
+                        {.console_message = err_msg, .log_message = "", .is_error = true, .is_poison_pill = false}))
                         std::this_thread::yield();
                     ctx.messages_enqueued.fetch_add(1, std::memory_order_release);
                     ctx.messages_enqueued.notify_one();
@@ -722,7 +728,8 @@ int Executor::process_step(size_t node_idx, ExecuteContext &ctx, StatCache &stat
                 }
             } else {
                 std::string err_msg = std::format("Failed to execute: {}\n", res.error());
-                while (!ctx.progress_queue.enqueue({err_msg, "", true, false}))
+                while (!ctx.progress_queue.enqueue(
+                    {.console_message = err_msg, .log_message = "", .is_error = true, .is_poison_pill = false}))
                     std::this_thread::yield();
                 ctx.messages_enqueued.fetch_add(1, std::memory_order_release);
                 ctx.messages_enqueued.notify_one();
