@@ -18,7 +18,6 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
-#include <mutex>
 #include <ostream>
 #include <print>
 #include <queue>
