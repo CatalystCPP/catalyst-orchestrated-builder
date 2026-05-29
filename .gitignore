@@ -9,3 +9,6 @@ benchmarks/perf.data
 benchmarks/perf.data.*
 benchmarks/*graph*.svg
 docs/doxygen
+report.pdf
+report.toc
+report.aux
