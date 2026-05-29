@@ -14,6 +14,17 @@
 
 namespace catalyst {
 
+struct JSON;
+
+struct ToolchainFlags {
+    const std::vector<std::string> &cc;
+    const std::vector<std::string> &cxx;
+    const std::vector<std::string> &cflags;
+    const std::vector<std::string> &cxxflags;
+    const std::vector<std::string> &ldflags;
+    const std::vector<std::string> &ldlibs;
+};
+
 /**
  * @brief Thread-safe cache for file status information (modification times).
  *
@@ -119,7 +130,8 @@ private:
     struct ExecuteContext; // Forward declaration
 
     bool needs_rebuild(const BuildStep &step, StatCache &stat_cache) const;
-    std::vector<std::string> build_command_args(const BuildStep &step, bool dry_run_mode, const ExecuteContext &ctx) const;
+    JSON buildCompdb(const std::vector<size_t> &order, const BuildGraph &build_graph) const;
+    std::vector<std::string> build_command_args(const BuildStep &step, bool dry_run_mode, const ToolchainFlags &flags) const;
     void print_message(const BuildStep &step, ExecuteContext& ctx, bool is_tty) const;
     int process_step(size_t node_idx, ExecuteContext& ctx, StatCache& stat_cache, bool is_tty) const;
     void worker_loop(ExecuteContext& ctx, StatCache& stat_cache, bool is_tty, size_t thread_count);

@@ -34,14 +34,7 @@
 #endif
 
 namespace catalyst {
-struct BuildCompdbParams {
-    const std::vector<size_t> &order;
-    const catalyst::BuildGraph &build_graph;
-    std::vector<std::string> cc_vec;
-    std::vector<std::string> cxx_vec;
-    std::vector<std::string> cflags_vec;
-    std::vector<std::string> cxxflags_vec;
-};
+
 
 [[clang::always_inline]]
 inline std::string escapeJSONString(std::string_view s) {
@@ -147,11 +140,26 @@ void writeCompdb(const catalyst::JSON &compdb, std::ofstream &out) {
     dumpJSON(compdb, out);
 }
 
-catalyst::JSON buildCompdb(const BuildCompdbParams &params) {
-    auto [order, build_graph, cc_vec, cxx_vec, cflags_vec, cxxflags_vec] = params;
+catalyst::JSON Executor::buildCompdb(const std::vector<size_t> &order, const BuildGraph &build_graph) const {
     using JSON = catalyst::JSON;
     JSON compdb = JSON::array();
     auto cwd = std::filesystem::current_path().string();
+
+    const auto cc_vec = builder.getDefinitionOf<std::vector<std::string>>("cc");
+    const auto cxx_vec = builder.getDefinitionOf<std::vector<std::string>>("cxx");
+    const auto cflags_vec = builder.getDefinitionOf<std::vector<std::string>>("cflags");
+    const auto cxxflags_vec = builder.getDefinitionOf<std::vector<std::string>>("cxxflags");
+    const auto ldflags_vec = builder.getDefinitionOf<std::vector<std::string>>("ldflags");
+    const auto ldlibs_vec = builder.getDefinitionOf<std::vector<std::string>>("ldlibs");
+
+    ToolchainFlags tf = {
+        .cc = cc_vec,
+        .cxx = cxx_vec,
+        .cflags = cflags_vec,
+        .cxxflags = cxxflags_vec,
+        .ldflags = ldflags_vec,
+        .ldlibs = ldlibs_vec
+    };
 
     for (size_t node_idx : order) {
         const auto &node = build_graph.nodes()[node_idx];
@@ -165,36 +173,7 @@ catalyst::JSON buildCompdb(const BuildCompdbParams &params) {
 
         const std::vector<std::string_view> &inputs = step.parsed_inputs;
 
-        std::vector<std::string> args;
-        auto add_parts = [&args](const auto &parts) {
-            for (const auto &part : parts) {
-                if (part.begin() != part.end()) {
-                    args.push_back(std::ranges::to<std::string>(part));
-                }
-            }
-        };
-
-        constexpr static size_t EXTRA_ARGS_RESERVED_SPACE = 7;
-        if (step.tool == "cc") {
-            add_parts(cc_vec);
-            add_parts(cflags_vec);
-            args.reserve(args.size() + inputs.size() + EXTRA_ARGS_RESERVED_SPACE);
-            args.insert(args.end(), {"-MMD", "-MF", std::string(step.output) + ".d", "-c"});
-            for (const auto &in : inputs)
-                args.emplace_back(in);
-            args.emplace_back("-o");
-            args.emplace_back(step.output);
-        } else if (step.tool == "cxx") {
-            add_parts(cxx_vec);
-            add_parts(cxxflags_vec);
-            args.reserve(args.size() + inputs.size() + EXTRA_ARGS_RESERVED_SPACE);
-            args.insert(args.end(), {"-MMD", "-MF", std::string(step.output) + ".d", "-c"});
-            args.reserve(args.size() + inputs.size());
-            for (const auto &in : inputs)
-                args.emplace_back(in);
-            args.emplace_back("-o");
-            args.emplace_back(step.output);
-        }
+        std::vector<std::string> args = build_command_args(step, false, tf);
 
         JSON entry;
         entry["directory"] = cwd;
@@ -326,14 +305,7 @@ Result<void> Executor::emit_compdb() {
         return std::unexpected(res.error());
     order = *res;
 
-    catalyst::JSON compdb = buildCompdb({
-        .order = order,
-        .build_graph = build_graph,
-        .cc_vec = builder.getDefinitionOf<std::vector<std::string>>("cc"),
-        .cxx_vec = builder.getDefinitionOf<std::vector<std::string>>("cxx"),
-        .cflags_vec = builder.getDefinitionOf<std::vector<std::string>>("cflags"),
-        .cxxflags_vec = builder.getDefinitionOf<std::vector<std::string>>("cxxflags"),
-    });
+    catalyst::JSON compdb = buildCompdb(order, build_graph);
 
     std::ofstream f("compile_commands.json");
     writeCompdb(compdb, f);
@@ -352,54 +324,16 @@ Result<void> Executor::emit_commands() {
     const auto cxx_vec = builder.getDefinitionOf<std::vector<std::string>>("cxx");
     const auto cflags_vec = builder.getDefinitionOf<std::vector<std::string>>("cflags");
     const auto cxxflags_vec = builder.getDefinitionOf<std::vector<std::string>>("cxxflags");
+    const auto ldflags_vec = builder.getDefinitionOf<std::vector<std::string>>("ldflags");
+    const auto ldlibs_vec = builder.getDefinitionOf<std::vector<std::string>>("ldlibs");
 
-    auto build_command_args_internal = [&](const BuildStep &step) -> std::vector<std::string> {
-        std::vector<std::string> args;
-        auto add_parts = [&args](const auto &parts) {
-            for (const auto &part : parts) {
-                if (part.begin() != part.end()) {
-                    args.push_back(std::ranges::to<std::string>(part));
-                }
-            }
-        };
-
-        const auto &inputs = step.parsed_inputs;
-
-        if (step.tool == "cc") {
-            add_parts(cc_vec);
-            add_parts(cflags_vec);
-            args.insert(args.end(), {"-MMD", "-MF", std::string(step.output) + ".d", "-c"});
-            for (const auto &in : inputs)
-                args.emplace_back(in);
-            args.emplace_back("-o");
-            args.emplace_back(step.output);
-        } else if (step.tool == "cxx") {
-            add_parts(cxx_vec);
-            add_parts(cxxflags_vec);
-            args.insert(args.end(), {"-MMD", "-MF", std::string(step.output) + ".d", "-c"});
-            for (const auto &in : inputs)
-                args.emplace_back(in);
-            args.emplace_back("-o");
-            args.emplace_back(step.output);
-        } else if (step.tool == "ld") {
-            add_parts(cxx_vec);
-            for (const auto &in : inputs)
-                args.emplace_back(in);
-            args.emplace_back("-o");
-            args.emplace_back(step.output);
-        } else if (step.tool == "ar") {
-            args.insert(args.end(), {"ar", "rcs", std::string(step.output)});
-            for (const auto &in : inputs)
-                args.emplace_back(in);
-        } else if (step.tool == "sld") {
-            add_parts(cxx_vec);
-            args.emplace_back("-shared");
-            for (const auto &in : inputs)
-                args.emplace_back(in);
-            args.emplace_back("-o");
-            args.emplace_back(step.output);
-        }
-        return args;
+    ToolchainFlags tf = {
+        .cc = cc_vec,
+        .cxx = cxx_vec,
+        .cflags = cflags_vec,
+        .cxxflags = cxxflags_vec,
+        .ldflags = ldflags_vec,
+        .ldlibs = ldlibs_vec
     };
 
     for (size_t node_idx : order) {
@@ -407,7 +341,7 @@ Result<void> Executor::emit_commands() {
         if (!node.step_id.has_value())
             continue;
         const auto &step = build_graph.steps()[*node.step_id];
-        auto args = build_command_args_internal(step);
+        auto args = build_command_args(step, false, tf);
         for (size_t i = 0; i < args.size(); ++i) {
             std::cout << args[i] << (i == args.size() - 1 ? "" : " ");
         }
@@ -483,7 +417,7 @@ struct Executor::ExecuteContext {
  * response (.rsp) files for linking steps with many inputs to avoid command-line
  * length limits.
  */
-std::vector<std::string> Executor::build_command_args(const BuildStep &step, bool dry_run_mode, const ExecuteContext &ctx) const {
+std::vector<std::string> Executor::build_command_args(const BuildStep &step, bool dry_run_mode, const ToolchainFlags &flags) const {
     std::vector<std::string> args;
     static constexpr auto ARGS_VEC_INIT_SZ = 40;
     args.reserve(ARGS_VEC_INIT_SZ);
@@ -500,23 +434,23 @@ std::vector<std::string> Executor::build_command_args(const BuildStep &step, boo
     const auto &inputs = step.parsed_inputs;
 
     if (step.tool == "cc") {
-        add_parts(ctx.cc_vec);
-        add_parts(ctx.cflags_vec);
+        add_parts(flags.cc);
+        add_parts(flags.cflags);
         args.insert(args.end(), {"-MMD", "-MF", std::string(step.output) + ".d", "-c"});
         for (const auto &in : inputs)
             args.emplace_back(in);
         args.emplace_back("-o");
         args.emplace_back(step.output);
     } else if (step.tool == "cxx") {
-        add_parts(ctx.cxx_vec);
-        add_parts(ctx.cxxflags_vec);
+        add_parts(flags.cxx);
+        add_parts(flags.cxxflags);
         args.insert(args.end(), {"-MMD", "-MF", std::string(step.output) + ".d", "-c"});
         for (const auto &in : inputs)
             args.emplace_back(in);
         args.emplace_back("-o");
         args.emplace_back(step.output);
     } else if (step.tool == "ld") {
-        add_parts(ctx.cxx_vec);
+        add_parts(flags.cxx);
         static constexpr auto TUNABLE_INPUT_SZ = 50;
         std::filesystem::path rsp_path = std::filesystem::path(step.output).replace_extension(".rsp");
 
@@ -546,14 +480,14 @@ std::vector<std::string> Executor::build_command_args(const BuildStep &step, boo
         }
         args.emplace_back("-o");
         args.emplace_back(step.output);
-        add_parts(ctx.ldflags_vec);
-        add_parts(ctx.ldlibs_vec);
+        add_parts(flags.ldflags);
+        add_parts(flags.ldlibs);
     } else if (step.tool == "ar") {
         args.insert(args.end(), {"ar", "rcs", std::string(step.output)});
         for (const auto &in : inputs)
             args.emplace_back(in);
     } else if (step.tool == "sld") {
-        add_parts(ctx.cxx_vec);
+        add_parts(flags.cxx);
         args.emplace_back("-shared");
         for (const auto &in : inputs)
             args.emplace_back(in);
@@ -672,7 +606,14 @@ int Executor::process_step(size_t node_idx, ExecuteContext &ctx, StatCache &stat
             if (config.dry_run)
                 return 0;
 
-            auto args = build_command_args(step, false, ctx);
+            auto args = build_command_args(step, false, {
+                .cc = ctx.cc_vec,
+                .cxx = ctx.cxx_vec,
+                .cflags = ctx.cflags_vec,
+                .cxxflags = ctx.cxxflags_vec,
+                .ldflags = ctx.ldflags_vec,
+                .ldlibs = ctx.ldlibs_vec
+            });
 
 #if FF_cbe__profiling
             auto start = std::chrono::steady_clock::now();
