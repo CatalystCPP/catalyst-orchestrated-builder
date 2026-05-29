@@ -129,7 +129,7 @@ public:
 private:
     struct ExecuteContext; // Forward declaration
 
-    bool needs_rebuild(const BuildStep &step, StatCache &stat_cache) const;
+    bool needs_rebuild(const BuildStep &step, StatCache &stat_cache, const ToolchainFlags &flags, uint64_t *out_hash = nullptr) const;
     JSON buildCompdb(const std::vector<size_t> &order, const BuildGraph &build_graph) const;
     std::vector<std::string> build_command_args(const BuildStep &step, bool dry_run_mode, const ToolchainFlags &flags) const;
     void print_message(const BuildStep &step, ExecuteContext& ctx, bool is_tty) const;

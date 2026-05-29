@@ -1,7 +1,8 @@
 #include "cbe/executor.hpp"
 
-#include "cbe/builder.hpp"
+#include "cbe/binary.hpp"
 #include "cbe/build_step.hpp"
+#include "cbe/builder.hpp"
 #include "cbe/json.hpp"
 #include "cbe/mpmc_queue.hpp"
 #include "cbe/mpsc_queue.hpp"
@@ -34,7 +35,6 @@
 #endif
 
 namespace catalyst {
-
 
 [[clang::always_inline]]
 inline std::string escapeJSONString(std::string_view s) {
@@ -152,14 +152,12 @@ catalyst::JSON Executor::buildCompdb(const std::vector<size_t> &order, const Bui
     const auto ldflags_vec = builder.getDefinitionOf<std::vector<std::string>>("ldflags");
     const auto ldlibs_vec = builder.getDefinitionOf<std::vector<std::string>>("ldlibs");
 
-    ToolchainFlags tf = {
-        .cc = cc_vec,
-        .cxx = cxx_vec,
-        .cflags = cflags_vec,
-        .cxxflags = cxxflags_vec,
-        .ldflags = ldflags_vec,
-        .ldlibs = ldlibs_vec
-    };
+    ToolchainFlags tf = {.cc = cc_vec,
+                         .cxx = cxx_vec,
+                         .cflags = cflags_vec,
+                         .cxxflags = cxxflags_vec,
+                         .ldflags = ldflags_vec,
+                         .ldlibs = ldlibs_vec};
 
     for (size_t node_idx : order) {
         const auto &node = build_graph.nodes()[node_idx];
@@ -232,10 +230,42 @@ Result<void> Executor::clean() {
     return {};
 }
 
+namespace {
+uint64_t hash_command(const std::vector<std::string> &args) {
+    constexpr auto FNV_OFFSET_BASIS = 14695981039346656037ULL;
+    constexpr auto FNV_PRIME = 1099511628211ULL;
+    uint64_t hash = FNV_OFFSET_BASIS;
+    for (const auto &arg : args) {
+        for (char c : arg) {
+            hash ^= static_cast<uint64_t>(c);
+            hash *= FNV_PRIME;
+        }
+        hash ^= static_cast<uint64_t>(' ');
+        hash *= FNV_PRIME;
+    }
+    return hash;
+}
+} // namespace
+
 [[clang::always_inline]]
-bool inline Executor::needs_rebuild(const BuildStep &step, StatCache &stat_cache) const {
-    if (!std::filesystem::exists(step.output))
+bool inline Executor::needs_rebuild(const BuildStep &step,
+                                    StatCache &stat_cache,
+                                    const ToolchainFlags &flags,
+                                    uint64_t *out_hash) const {
+    auto args = build_command_args(step, false, flags);
+    uint64_t current_hash = hash_command(args);
+
+    if (out_hash) {
+        *out_hash = current_hash;
+    }
+
+    if (!std::filesystem::exists(step.output)) {
         return true;
+    }
+
+    if (step.command_hash != current_hash) {
+        return true;
+    }
 
     auto output_modtime = std::filesystem::last_write_time(step.output);
 
@@ -270,6 +300,20 @@ Result<void> Executor::emit_graph() {
     catalyst::BuildGraph build_graph = builder.emit_graph();
     StatCache stat_cache;
 
+    const auto cc_vec = builder.getDefinitionOf<std::vector<std::string>>("cc");
+    const auto cxx_vec = builder.getDefinitionOf<std::vector<std::string>>("cxx");
+    const auto cflags_vec = builder.getDefinitionOf<std::vector<std::string>>("cflags");
+    const auto cxxflags_vec = builder.getDefinitionOf<std::vector<std::string>>("cxxflags");
+    const auto ldflags_vec = builder.getDefinitionOf<std::vector<std::string>>("ldflags");
+    const auto ldlibs_vec = builder.getDefinitionOf<std::vector<std::string>>("ldlibs");
+
+    ToolchainFlags tf = {.cc = cc_vec,
+                         .cxx = cxx_vec,
+                         .cflags = cflags_vec,
+                         .cxxflags = cxxflags_vec,
+                         .ldflags = ldflags_vec,
+                         .ldlibs = ldlibs_vec};
+
     std::cout << "digraph catalyst_build {\n";
     std::cout << "  rankdir=LR;\n";
     std::cout << "  node [shape=box, style=filled, fontname=\"Helvetica\"];\n";
@@ -280,7 +324,7 @@ Result<void> Executor::emit_graph() {
 
         if (node.step_id.has_value()) {
             const auto &step = build_graph.steps()[*node.step_id];
-            if (needs_rebuild(step, stat_cache)) {
+            if (needs_rebuild(step, stat_cache, tf)) {
                 color = "green";
             } else {
                 color = "white";
@@ -327,14 +371,12 @@ Result<void> Executor::emit_commands() {
     const auto ldflags_vec = builder.getDefinitionOf<std::vector<std::string>>("ldflags");
     const auto ldlibs_vec = builder.getDefinitionOf<std::vector<std::string>>("ldlibs");
 
-    ToolchainFlags tf = {
-        .cc = cc_vec,
-        .cxx = cxx_vec,
-        .cflags = cflags_vec,
-        .cxxflags = cxxflags_vec,
-        .ldflags = ldflags_vec,
-        .ldlibs = ldlibs_vec
-    };
+    ToolchainFlags tf = {.cc = cc_vec,
+                         .cxx = cxx_vec,
+                         .cflags = cflags_vec,
+                         .cxxflags = cxxflags_vec,
+                         .ldflags = ldflags_vec,
+                         .ldlibs = ldlibs_vec};
 
     for (size_t node_idx : order) {
         const auto &node = build_graph.nodes()[node_idx];
@@ -417,7 +459,8 @@ struct Executor::ExecuteContext {
  * response (.rsp) files for linking steps with many inputs to avoid command-line
  * length limits.
  */
-std::vector<std::string> Executor::build_command_args(const BuildStep &step, bool dry_run_mode, const ToolchainFlags &flags) const {
+std::vector<std::string>
+Executor::build_command_args(const BuildStep &step, bool dry_run_mode, const ToolchainFlags &flags) const {
     std::vector<std::string> args;
     static constexpr auto ARGS_VEC_INIT_SZ = 40;
     args.reserve(ARGS_VEC_INIT_SZ);
@@ -599,21 +642,22 @@ int Executor::process_step(size_t node_idx, ExecuteContext &ctx, StatCache &stat
     // NOLINTBEGIN(performance-avoid-endl)
     const auto &node = ctx.build_graph.nodes()[node_idx];
     if (node.step_id.has_value()) {
-        const auto &step = ctx.build_graph.steps()[*node.step_id];
+        auto &step = ctx.build_graph.steps()[*node.step_id];
 
-        if (needs_rebuild(step, stat_cache)) {
+        ToolchainFlags tf = {.cc = ctx.cc_vec,
+                             .cxx = ctx.cxx_vec,
+                             .cflags = ctx.cflags_vec,
+                             .cxxflags = ctx.cxxflags_vec,
+                             .ldflags = ctx.ldflags_vec,
+                             .ldlibs = ctx.ldlibs_vec};
+
+        uint64_t step_hash = 0;
+        if (needs_rebuild(step, stat_cache, tf, &step_hash)) {
             print_message(step, ctx, is_tty);
             if (config.dry_run)
                 return 0;
 
-            auto args = build_command_args(step, false, {
-                .cc = ctx.cc_vec,
-                .cxx = ctx.cxx_vec,
-                .cflags = ctx.cflags_vec,
-                .cxxflags = ctx.cxxflags_vec,
-                .ldflags = ctx.ldflags_vec,
-                .ldlibs = ctx.ldlibs_vec
-            });
+            auto args = build_command_args(step, false, tf);
 
 #if FF_cbe__profiling
             auto start = std::chrono::steady_clock::now();
@@ -671,6 +715,8 @@ int Executor::process_step(size_t node_idx, ExecuteContext &ctx, StatCache &stat
                     ctx.messages_enqueued.notify_one();
                     return ec;
                 }
+                // build succeeded, update the command hash for future up-to-date checks
+                step.command_hash = step_hash;
             } else {
                 std::string err_msg = std::format("Failed to execute: {}\n", res.error());
                 while (!ctx.progress_queue.enqueue(
@@ -865,11 +911,17 @@ Result<void> Executor::execute() {
 
     // Pre-count steps that need rebuilding and find final output target
     std::string final_output_name;
+    ToolchainFlags tf = {.cc = ctx.cc_vec,
+                         .cxx = ctx.cxx_vec,
+                         .cflags = ctx.cflags_vec,
+                         .cxxflags = ctx.cxxflags_vec,
+                         .ldflags = ctx.ldflags_vec,
+                         .ldlibs = ctx.ldlibs_vec};
     for (size_t i = 0; i < ctx.total_nodes; ++i) {
         const auto &node = ctx.build_graph.nodes()[i];
         if (node.step_id.has_value()) {
             const auto &step = ctx.build_graph.steps()[*node.step_id];
-            if (needs_rebuild(step, stat_cache)) {
+            if (needs_rebuild(step, stat_cache, tf)) {
                 ctx.steps_to_build++;
             }
             if (node.out_edges.empty()) {
@@ -976,6 +1028,13 @@ Result<void> Executor::execute() {
             std::println("\r\033[K[{}] \033[32m[CBE FINISHED: {}]\033[0m", timestamp, final_output_name);
         } else {
             std::println("[{}] [CBE FINISHED: {}]", timestamp, final_output_name);
+        }
+    }
+
+    if (!config.dry_run) {
+        builder.graph_ = std::move(ctx.build_graph);
+        if (auto bin_res = emit_bin(builder); !bin_res) {
+            std::println(stderr, "Warning: Failed to write .catalyst.bin: {}", bin_res.error());
         }
     }
 

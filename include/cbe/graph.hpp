@@ -60,6 +60,9 @@ public:
     const std::vector<BuildStep> &steps() const {
         return steps_;
     }
+    std::vector<BuildStep> &steps() {
+        return steps_;
+    }
 
     /**
      * @brief Performs a topological sort of the graph.

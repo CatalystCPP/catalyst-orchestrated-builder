@@ -80,11 +80,11 @@ Result<void> parse_bin(CBEBuilder &builder) {
 
     const auto *header = reinterpret_cast<const BinHeader *>(content.data());
 #ifdef __linux__
-    if (std::memcmp(header->magic.data(), "CATBL001", BIN_HEADER_MAGIC_BIT_LEN) != 0) {
+    if (std::memcmp(header->magic.data(), "CATBL002", BIN_HEADER_MAGIC_BIT_LEN) != 0) {
 #elifdef __apple__
-    if (std::memcmp(header->magic, "CATBM001", 8) != 0) {
+    if (std::memcmp(header->magic, "CATBM002", 8) != 0) {
 #elifdef _WIN32 || _WIN64
-    if (std::memcmp(header->magic, "CATBW001", 8) != 0) {
+    if (std::memcmp(header->magic, "CATBW002", 8) != 0) {
 #endif
         return std::unexpected("Invalid magic or version in .catalyst.bin");
     }
@@ -137,6 +137,8 @@ Result<void> parse_bin(CBEBuilder &builder) {
         ptr += sizeof(StringRef);
         StringRef output_ref = *reinterpret_cast<const StringRef *>(ptr);
         ptr += sizeof(StringRef);
+        uint64_t command_hash = *reinterpret_cast<const uint64_t *>(ptr);
+        ptr += sizeof(uint64_t);
         uint64_t depfile_count = *reinterpret_cast<const uint64_t *>(ptr);
         ptr += sizeof(uint64_t);
 
@@ -177,7 +179,8 @@ Result<void> parse_bin(CBEBuilder &builder) {
                                          .output = get_sv(output_ref),
                                          .opaque_inputs = std::move(opaque_inputs),
                                          .depfile_inputs = std::move(depfile_inputs),
-                                         .parsed_inputs = std::move(parsed_inputs)});
+                                         .parsed_inputs = std::move(parsed_inputs),
+                                         .command_hash = command_hash});
     }
 
     builder.add_resource(file);
@@ -185,9 +188,9 @@ Result<void> parse_bin(CBEBuilder &builder) {
 }
 
 Result<void> emit_bin(CBEBuilder &builder) {
-    std::ofstream out(".catalyst.bin", std::ios::binary);
+    std::ofstream out(".catalyst.bin.tmp", std::ios::binary);
     if (!out) {
-        return std::unexpected("Failed to open .catalyst.bin for writing");
+        return std::unexpected("Failed to open .catalyst.bin.tmp for writing");
     }
 
     StringBuffer sb;
@@ -243,6 +246,11 @@ Result<void> emit_bin(CBEBuilder &builder) {
                          reinterpret_cast<const char *>(&output_ref),
                          reinterpret_cast<const char *>(&output_ref) + sizeof(StringRef));
 
+        uint64_t command_hash = step.command_hash;
+        steps_buf.insert(steps_buf.end(),
+                         reinterpret_cast<const char *>(&command_hash),
+                         reinterpret_cast<const char *>(&command_hash) + sizeof(uint64_t));
+
         uint64_t depfile_count = step.depfile_inputs.has_value() ? step.depfile_inputs.size() : UINT64_MAX;
         steps_buf.insert(steps_buf.end(),
                          reinterpret_cast<const char *>(&depfile_count),
@@ -277,6 +285,18 @@ Result<void> emit_bin(CBEBuilder &builder) {
     out.write(nodes_buf.data(), nodes_buf.size());
     out.write(steps_buf.data(), steps_buf.size());
     out.write(sb.data().data(), sb.data().size());
+    out.close();
+    if (!out) {
+        std::error_code rm_ec;
+        std::filesystem::remove(".catalyst.bin.tmp", rm_ec);
+        return std::unexpected("Failed to write .catalyst.bin.tmp");
+    }
+
+    std::error_code ec;
+    std::filesystem::rename(".catalyst.bin.tmp", ".catalyst.bin", ec);
+    if (ec) {
+        return std::unexpected("Failed to rename .catalyst.bin.tmp to .catalyst.bin: " + ec.message());
+    }
 
     return {};
     // NOLINTEND(cppcoreguidelines-narrowing-conversions, bugprone-narrowing-conversions)
