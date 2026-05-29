@@ -2,11 +2,11 @@
 
 #include "cbe/builder.hpp"
 #include "cbe/domain.hpp"
-#include "cbe/process_exec.hpp"
-#include "cbe/utility.hpp"
+#include "cbe/json.hpp"
 #include "cbe/mpmc_queue.hpp"
 #include "cbe/mpsc_queue.hpp"
-#include "nlohmann/json_fwd.hpp"
+#include "cbe/process_exec.hpp"
+#include "cbe/utility.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -19,7 +19,6 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
-#include <nlohmann/json.hpp>
 #include <ostream>
 #include <print>
 #include <queue>
@@ -35,7 +34,7 @@
 #include <sys/resource.h>
 #endif
 
-namespace {
+namespace catalyst {
 struct BuildCompdbParams {
     const std::vector<size_t> &order;
     const catalyst::BuildGraph &build_graph;
@@ -45,9 +44,109 @@ struct BuildCompdbParams {
     std::vector<std::string> cxxflags_vec;
 };
 
-nlohmann::json buildCompdb(const BuildCompdbParams &params) {
+[[clang::always_inline]]
+inline std::string escapeJSONString(std::string_view s) {
+    std::string res;
+    res.reserve(s.size() + 2);
+    res.push_back('"');
+    for (char c : s) {
+        switch (c) {
+            case '"':
+                res.append("\\\"");
+                break;
+            case '\\':
+                res.append("\\\\");
+                break;
+            case '\b':
+                res.append("\\b");
+                break;
+            case '\f':
+                res.append("\\f");
+                break;
+            case '\n':
+                res.append("\\n");
+                break;
+            case '\r':
+                res.append("\\r");
+                break;
+            case '\t':
+                res.append("\\t");
+                break;
+            default:
+                if (static_cast<unsigned char>(c) < 0x20) {
+                    char buf[7];
+                    std::snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned char>(c));
+                    res.append(buf);
+                } else {
+                    res.push_back(c);
+                }
+                break;
+        }
+    }
+    res.push_back('"');
+    return res;
+}
+
+[[clang::always_inline]]
+inline void dumpJSON(const catalyst::JSON &j, std::ostream &os, int indent = 0) {
+    switch (j.type) {
+        case catalyst::JSON::Type::Null:
+            os << "null";
+            break;
+        case catalyst::JSON::Type::Boolean:
+            os << (j.bool_val ? "true" : "false");
+            break;
+        case catalyst::JSON::Type::Number:
+            os << j.num_val;
+            break;
+        case catalyst::JSON::Type::String:
+            os << escapeJSONString(j.str_val);
+            break;
+        case catalyst::JSON::Type::Array: {
+            if (j.arr_val.empty()) {
+                os << "[]";
+                break;
+            }
+            os << "[\n";
+            for (size_t i = 0; i < j.arr_val.size(); ++i) {
+                os << std::string(indent + 4, ' ');
+                dumpJSON(j.arr_val[i], os, indent + 4);
+                if (i + 1 < j.arr_val.size()) {
+                    os << ",";
+                }
+                os << "\n";
+            }
+            os << std::string(indent, ' ') << "]";
+            break;
+        }
+        case catalyst::JSON::Type::Object: {
+            if (j.obj_val.empty()) {
+                os << "{}";
+                break;
+            }
+            os << "{\n";
+            size_t i = 0;
+            for (auto it = j.obj_val.begin(); it != j.obj_val.end(); ++it, ++i) {
+                os << std::string(indent + 4, ' ') << escapeJSONString(it->first) << ": ";
+                dumpJSON(it->second, os, indent + 4);
+                if (i + 1 < j.obj_val.size()) {
+                    os << ",";
+                }
+                os << "\n";
+            }
+            os << std::string(indent, ' ') << "}";
+            break;
+        }
+    }
+}
+
+void writeCompdb(const catalyst::JSON &compdb, std::ofstream &out) {
+    dumpJSON(compdb, out);
+}
+
+catalyst::JSON buildCompdb(const BuildCompdbParams &params) {
     auto [order, build_graph, cc_vec, cxx_vec, cflags_vec, cxxflags_vec] = params;
-    using JSON = nlohmann::json;
+    using JSON = catalyst::JSON;
     JSON compdb = JSON::array();
     auto cwd = std::filesystem::current_path().string();
 
@@ -106,9 +205,6 @@ nlohmann::json buildCompdb(const BuildCompdbParams &params) {
 
     return compdb;
 }
-} // namespace
-
-namespace catalyst {
 
 bool isNewer(const std::filesystem::path &new_file, const std::filesystem::path &old_file) {
     std::error_code ec;
@@ -227,8 +323,7 @@ Result<void> Executor::emit_compdb() {
         return std::unexpected(res.error());
     order = *res;
 
-    using JSON = nlohmann::json;
-    JSON compdb = buildCompdb({
+    catalyst::JSON compdb = buildCompdb({
         .order = order,
         .build_graph = build_graph,
         .cc_vec = builder.getDefinitionOf<std::vector<std::string>>("cc"),
@@ -238,7 +333,7 @@ Result<void> Executor::emit_compdb() {
     });
 
     std::ofstream f("compile_commands.json");
-    f << compdb.dump(4);
+    writeCompdb(compdb, f);
     return {};
 }
 
@@ -318,7 +413,6 @@ Result<void> Executor::emit_commands() {
     return {};
 }
 
-
 struct Executor::ExecuteContext {
     struct Task {
         size_t node_idx;
@@ -360,18 +454,18 @@ struct Executor::ExecuteContext {
     catalyst::BuildGraph build_graph;
 
     ExecuteContext(size_t node_count,
-                   std::vector<std::string> cc, std::vector<std::string> cxx,
-                   std::vector<std::string> cflags, std::vector<std::string> cxxflags,
-                   std::vector<std::string> ldflags, std::vector<std::string> ldlibs,
+                   std::vector<std::string> cc,
+                   std::vector<std::string> cxx,
+                   std::vector<std::string> cflags,
+                   std::vector<std::string> cxxflags,
+                   std::vector<std::string> ldflags,
+                   std::vector<std::string> ldlibs,
                    catalyst::BuildGraph bg)
-        : ready_queue(node_count),
-          progress_queue(8192),
-          in_degrees(node_count),
-          total_nodes(node_count),
-          cc_vec(std::move(cc)), cxx_vec(std::move(cxx)),
-          cflags_vec(std::move(cflags)), cxxflags_vec(std::move(cxxflags)),
-          ldflags_vec(std::move(ldflags)), ldlibs_vec(std::move(ldlibs)),
-          build_graph(std::move(bg)) {}
+        : ready_queue(node_count), progress_queue(8192), in_degrees(node_count), total_nodes(node_count),
+          cc_vec(std::move(cc)), cxx_vec(std::move(cxx)), cflags_vec(std::move(cflags)),
+          cxxflags_vec(std::move(cxxflags)), ldflags_vec(std::move(ldflags)), ldlibs_vec(std::move(ldlibs)),
+          build_graph(std::move(bg)) {
+    }
 };
 
 /**
@@ -472,7 +566,7 @@ std::vector<std::string> Executor::build_command_args(const BuildStep &step, boo
  * If work estimates are enabled, calculates the estimate for the node and assigns it.
  * Utilizes the lock-free queue and notifies a sleeping worker thread via atomic wait primitives.
  */
-void Executor::push_ready(size_t idx, ExecuteContext& ctx) {
+void Executor::push_ready(size_t idx, ExecuteContext &ctx) {
     size_t est = 0;
 #if FF_cbe__estimates
     const auto &node = ctx.build_graph.nodes()[idx];
@@ -490,7 +584,7 @@ void Executor::push_ready(size_t idx, ExecuteContext& ctx) {
  *
  * Uses terminal color codes if stdout is a TTY and updates the line dynamically.
  */
-void Executor::print_message(const BuildStep &step, ExecuteContext& ctx, bool is_tty) const {
+void Executor::print_message(const BuildStep &step, ExecuteContext &ctx, bool is_tty) const {
     if (config.silent) {
         return;
     }
@@ -546,7 +640,8 @@ void Executor::print_message(const BuildStep &step, ExecuteContext& ctx, bool is
         }
     }
 
-    while (!ctx.progress_queue.enqueue({msg, "", false, false})) std::this_thread::yield();
+    while (!ctx.progress_queue.enqueue({msg, "", false, false}))
+        std::this_thread::yield();
     ctx.messages_enqueued.fetch_add(1, std::memory_order_release);
     ctx.messages_enqueued.notify_one();
 }
@@ -557,7 +652,7 @@ void Executor::print_message(const BuildStep &step, ExecuteContext& ctx, bool is
  * Verifies if the node requires rebuilding, generates its command, invokes the process
  * executor, and captures/logs output in a thread-safe manner. Returns 0 on success.
  */
-int Executor::process_step(size_t node_idx, ExecuteContext& ctx, StatCache& stat_cache, bool is_tty) const {
+int Executor::process_step(size_t node_idx, ExecuteContext &ctx, StatCache &stat_cache, bool is_tty) const {
     // NOLINTBEGIN(performance-avoid-endl)
     const auto &node = ctx.build_graph.nodes()[node_idx];
     if (node.step_id.has_value()) {
@@ -584,7 +679,8 @@ int Executor::process_step(size_t node_idx, ExecuteContext& ctx, StatCache& stat
             std::chrono::duration<double> diff = end - start;
             {
                 std::string msg = std::format("Step {} took {:.4f}s\n", step.output, diff.count());
-                while (!ctx.progress_queue.enqueue({msg, "", false, false})) std::this_thread::yield();
+                while (!ctx.progress_queue.enqueue({msg, "", false, false}))
+                    std::this_thread::yield();
                 ctx.messages_enqueued.fetch_add(1, std::memory_order_release);
                 ctx.messages_enqueued.notify_one();
             }
@@ -602,27 +698,32 @@ int Executor::process_step(size_t node_idx, ExecuteContext& ctx, StatCache& stat
                     std::string log_msg;
                     if (!config.build_log_file.empty()) {
                         log_msg = std::format("=== {} -> {} ===\n{}", step.tool, step.output, output);
-                        if (output.back() != '\n') log_msg += '\n';
+                        if (output.back() != '\n')
+                            log_msg += '\n';
                         log_msg += '\n';
                     }
 
                     if (!console_msg.empty() || !log_msg.empty()) {
-                        while (!ctx.progress_queue.enqueue({console_msg, log_msg, ec != 0, false})) std::this_thread::yield();
+                        while (!ctx.progress_queue.enqueue({console_msg, log_msg, ec != 0, false}))
+                            std::this_thread::yield();
                         ctx.messages_enqueued.fetch_add(1, std::memory_order_release);
                         ctx.messages_enqueued.notify_one();
                     }
                 }
 #endif
                 if (ec != 0) {
-                    std::string err_msg = std::format("Build failed: {} -> {} (exit code {})\n", step.tool, step.output, ec);
-                    while (!ctx.progress_queue.enqueue({err_msg, "", true, false})) std::this_thread::yield();
+                    std::string err_msg =
+                        std::format("Build failed: {} -> {} (exit code {})\n", step.tool, step.output, ec);
+                    while (!ctx.progress_queue.enqueue({err_msg, "", true, false}))
+                        std::this_thread::yield();
                     ctx.messages_enqueued.fetch_add(1, std::memory_order_release);
                     ctx.messages_enqueued.notify_one();
                     return ec;
                 }
             } else {
                 std::string err_msg = std::format("Failed to execute: {}\n", res.error());
-                while (!ctx.progress_queue.enqueue({err_msg, "", true, false})) std::this_thread::yield();
+                while (!ctx.progress_queue.enqueue({err_msg, "", true, false}))
+                    std::this_thread::yield();
                 ctx.messages_enqueued.fetch_add(1, std::memory_order_release);
                 ctx.messages_enqueued.notify_one();
                 return 1;
@@ -631,7 +732,8 @@ int Executor::process_step(size_t node_idx, ExecuteContext& ctx, StatCache& stat
 #if FF_cbe__logging
         else {
             std::string msg = std::format("Skipping {} (up to date)\n", step.output);
-            while (!ctx.progress_queue.enqueue({msg, "", false, false})) std::this_thread::yield();
+            while (!ctx.progress_queue.enqueue({msg, "", false, false}))
+                std::this_thread::yield();
             ctx.messages_enqueued.fetch_add(1, std::memory_order_release);
             ctx.messages_enqueued.notify_one();
         }
@@ -647,7 +749,7 @@ int Executor::process_step(size_t node_idx, ExecuteContext& ctx, StatCache& stat
  * Loops indefinitely retrieving tasks from the lock-free queue. Uses atomic futex waits
  * to sleep when the queue is empty. Implements deadlock detection to resolve stalled graphs.
  */
-void Executor::worker_loop(ExecuteContext& ctx, StatCache& stat_cache, bool is_tty, size_t thread_count) {
+void Executor::worker_loop(ExecuteContext &ctx, StatCache &stat_cache, bool is_tty, size_t thread_count) {
 #if FF_cbe__heterogenous_core_affinity
     static constexpr size_t TUNABLE_HEAVY_THRESHOLD = 100;
 #endif
@@ -691,7 +793,7 @@ void Executor::worker_loop(ExecuteContext& ctx, StatCache& stat_cache, bool is_t
         if (task.estimate > TUNABLE_HEAVY_THRESHOLD) {
             setpriority(PRIO_PROCESS, 0, -5); // Hint: P-core
         } else {
-            setpriority(PRIO_PROCESS, 0, 5);  // Hint: E-core
+            setpriority(PRIO_PROCESS, 0, 5); // Hint: E-core
         }
 #endif
 
@@ -747,16 +849,14 @@ Result<void> Executor::execute() {
     if (build_graph.nodes().empty())
         return {};
 
-    ExecuteContext ctx(
-        build_graph.nodes().size(),
-        builder.getDefinitionOf<std::vector<std::string>>("cc"),
-        builder.getDefinitionOf<std::vector<std::string>>("cxx"),
-        builder.getDefinitionOf<std::vector<std::string>>("cflags"),
-        builder.getDefinitionOf<std::vector<std::string>>("cxxflags"),
-        builder.getDefinitionOf<std::vector<std::string>>("ldflags"),
-        builder.getDefinitionOf<std::vector<std::string>>("ldlibs"),
-        std::move(build_graph)
-    );
+    ExecuteContext ctx(build_graph.nodes().size(),
+                       builder.getDefinitionOf<std::vector<std::string>>("cc"),
+                       builder.getDefinitionOf<std::vector<std::string>>("cxx"),
+                       builder.getDefinitionOf<std::vector<std::string>>("cflags"),
+                       builder.getDefinitionOf<std::vector<std::string>>("cxxflags"),
+                       builder.getDefinitionOf<std::vector<std::string>>("ldflags"),
+                       builder.getDefinitionOf<std::vector<std::string>>("ldlibs"),
+                       std::move(build_graph));
 
     // Build initial in-degrees in a thread-safe atomic vector
     std::vector<int> temp_in_degrees(ctx.total_nodes, 0);
@@ -795,7 +895,7 @@ Result<void> Executor::execute() {
     bool is_tty = ::isatty(STDOUT_FILENO) != 0;
 
 #if FF_cbe__logging
-    std::ofstream* log_file_ptr = nullptr;
+    std::ofstream *log_file_ptr = nullptr;
     std::ofstream log_file;
     if (!config.build_log_file.empty()) {
         log_file.open(config.build_log_file, std::ios::trunc);
@@ -829,7 +929,8 @@ Result<void> Executor::execute() {
 
     std::jthread progress_thread([&ctx
 #if FF_cbe__logging
-                                   , log_file_ptr
+                                  ,
+                                  log_file_ptr
 #endif
     ]() {
         size_t processed = 0;
@@ -878,7 +979,8 @@ Result<void> Executor::execute() {
     pool.clear(); // Join all worker threads
 
     // Signal progress thread to exit
-    while (!ctx.progress_queue.enqueue({"", "", false, true})) std::this_thread::yield();
+    while (!ctx.progress_queue.enqueue({"", "", false, true}))
+        std::this_thread::yield();
     ctx.messages_enqueued.fetch_add(1, std::memory_order_release);
     ctx.messages_enqueued.notify_one();
     progress_thread.join();
@@ -922,6 +1024,5 @@ Result<void> Executor::execute() {
 
     return {};
 }
-
 
 } // namespace catalyst
