@@ -60,9 +60,11 @@ public:
         return definitions_;
     }
 
+    void load_graph_data(BuildGraph::SerializedData &&data) {
+        graph_.load_serialized_data(std::move(data));
+    }
+
     friend Result<void> parse(CBEBuilder &, const std::filesystem::path &);
-    friend Result<void> parse_bin(CBEBuilder &);
-    friend Result<void> emit_bin(CBEBuilder &);
     friend class Executor;
 
 private:

@@ -775,7 +775,10 @@ void Executor::worker_loop(ExecuteContext &ctx, StatCache &stat_cache, bool is_t
                 size_t sleeping = ctx.sleeping_threads.fetch_add(1, std::memory_order_acquire) + 1;
                 if (sleeping == thread_count && ctx.tasks_available.load(std::memory_order_acquire) == 0) {
                     // Everyone is asleep and no tasks! Deadlock/Stall detected!
-                    // Or a normal completion race condition where notify_all was missed.
+                    // Since we ran topo_sort up front, this is not a cycle but a true scheduling bug (missed-notify).
+#ifdef DEBUG
+                    assert(false && "Invariant violated: Parallel executor stalled due to scheduler bug (missed-notify).");
+#endif
                     ctx.tasks_available.store(std::numeric_limits<size_t>::max(), std::memory_order_release);
                     ctx.tasks_available.notify_all();
                     ctx.sleeping_threads.fetch_sub(1, std::memory_order_release);
@@ -846,6 +849,11 @@ Result<void> Executor::execute() {
     // If graph is empty
     if (build_graph.nodes().empty())
         return {};
+
+    // Run topo_sort once up front to detect real cycles deterministically.
+    if (auto topo_res = build_graph.topo_sort(); !topo_res) {
+        return std::unexpected(topo_res.error());
+    }
 
     ExecuteContext ctx(build_graph.nodes().size(),
                        builder.getDefinitionOf<std::vector<std::string>>("cc"),
@@ -1005,7 +1013,10 @@ Result<void> Executor::execute() {
         if (!config.silent && is_tty && ctx.steps_completed > 0) {
             std::print("\n");
         }
-        return std::unexpected("Cycle detected: Build stalled with pending nodes.");
+#ifdef DEBUG
+        assert(false && "Invariant violated: Build stalled due to runtime scheduler/concurrency bug.");
+#endif
+        return std::unexpected("Build stalled: Concurrency or scheduling bug detected.");
     }
 
     if (!config.silent && !final_output_name.empty()) {

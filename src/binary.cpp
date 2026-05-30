@@ -81,10 +81,10 @@ Result<void> parse_bin(CBEBuilder &builder) {
     const auto *header = reinterpret_cast<const BinHeader *>(content.data());
 #ifdef __linux__
     if (std::memcmp(header->magic.data(), "CATBL002", BIN_HEADER_MAGIC_BIT_LEN) != 0) {
-#elifdef __apple__
-    if (std::memcmp(header->magic, "CATBM002", 8) != 0) {
-#elifdef _WIN32 || _WIN64
-    if (std::memcmp(header->magic, "CATBW002", 8) != 0) {
+#elif defined(__APPLE__)
+    if (std::memcmp(header->magic.data(), "CATBM002", 8) != 0) {
+#elif defined(_WIN32) || defined(_WIN64)
+    if (std::memcmp(header->magic.data(), "CATBW002", 8) != 0) {
 #endif
         return std::unexpected("Invalid magic or version in .catalyst.bin");
     }
@@ -106,7 +106,11 @@ Result<void> parse_bin(CBEBuilder &builder) {
     }
 
     // 2. Nodes
-    builder.graph_.nodes_.reserve(header->num_nodes);
+    std::vector<BuildGraph::Node> nodes;
+    std::unordered_map<std::string_view, size_t> index;
+    nodes.reserve(header->num_nodes);
+    index.reserve(header->num_nodes);
+
     for (uint64_t i = 0; i < header->num_nodes; ++i) {
         StringRef path_ref = *reinterpret_cast<const StringRef *>(ptr);
         ptr += sizeof(StringRef);
@@ -124,12 +128,14 @@ Result<void> parse_bin(CBEBuilder &builder) {
         }
 
         std::string_view path = get_sv(path_ref);
-        builder.graph_.nodes_.push_back({.path = path, .out_edges = std::move(out_edges), .step_id = step_id});
-        builder.graph_.index_.emplace(path, i);
+        nodes.push_back({.path = path, .out_edges = std::move(out_edges), .step_id = step_id});
+        index.emplace(path, i);
     }
 
     // 3. Steps
-    builder.graph_.steps_.reserve(header->num_steps);
+    std::vector<BuildStep> steps;
+    steps.reserve(header->num_steps);
+
     for (uint64_t i = 0; i < header->num_steps; ++i) {
         StringRef tool_ref = *reinterpret_cast<const StringRef *>(ptr);
         ptr += sizeof(StringRef);
@@ -174,14 +180,20 @@ Result<void> parse_bin(CBEBuilder &builder) {
             }
         }
 
-        builder.graph_.steps_.push_back({.tool = get_sv(tool_ref),
-                                         .inputs = get_sv(inputs_ref),
-                                         .output = get_sv(output_ref),
-                                         .opaque_inputs = std::move(opaque_inputs),
-                                         .depfile_inputs = std::move(depfile_inputs),
-                                         .parsed_inputs = std::move(parsed_inputs),
-                                         .command_hash = command_hash});
+        steps.push_back({.tool = get_sv(tool_ref),
+                         .inputs = get_sv(inputs_ref),
+                         .output = get_sv(output_ref),
+                         .opaque_inputs = std::move(opaque_inputs),
+                         .depfile_inputs = std::move(depfile_inputs),
+                         .parsed_inputs = std::move(parsed_inputs),
+                         .command_hash = command_hash});
     }
+
+    builder.load_graph_data(BuildGraph::SerializedData{
+        .nodes = std::move(nodes),
+        .steps = std::move(steps),
+        .index = std::move(index)
+    });
 
     builder.add_resource(file);
     return {};
@@ -268,11 +280,11 @@ Result<void> emit_bin(CBEBuilder &builder) {
 
     BinHeader header{};
 #ifdef __linux__
-    std::memcpy(header.magic.data(), "CATBL001", BIN_HEADER_MAGIC_BIT_LEN);
-#elifdef __apple__
-    std::memcpy(header.magic, "CATBM001", 8);
-#elifdef _WIN32 || _WIN64
-    std::memcpy(header.magic, "CATBW001", 8);
+    std::memcpy(header.magic.data(), "CATBL002", BIN_HEADER_MAGIC_BIT_LEN);
+#elif defined(__APPLE__)
+    std::memcpy(header.magic.data(), "CATBM002", 8);
+#elif defined(_WIN32) || defined(_WIN64)
+    std::memcpy(header.magic.data(), "CATBW002", 8);
 #endif
     header.num_definitions = bin_defs.size();
     header.num_nodes = nodes.size();

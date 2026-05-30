@@ -205,25 +205,43 @@ Result<std::vector<size_t>> BuildGraph::topo_sort() const {
     std::vector<size_t> order;
     order.reserve(nodes_.size());
 
-    std::function<Result<void>(size_t)> dfs = [&](size_t u) -> Result<void> {
-        status[u] = STATUS::WORKING;
-        for (size_t v : nodes_[u].out_edges) {
-            if (status[v] == STATUS::UNSTARTED) {
-                if (auto res = dfs(v); !res)
-                    return res;
-            } else if (status[v] == STATUS::WORKING) {
-                return std::unexpected(std::format("Cycle detected in the build graph at: {}", nodes_[v].path));
-            }
-        }
-        status[u] = STATUS::FINISHED;
-        order.push_back(u);
-        return {};
+    struct StackFrame {
+        size_t node;
+        size_t next_edge_idx;
     };
 
+    std::vector<StackFrame> stack;
+    stack.reserve(nodes_.size());
+
     for (size_t i = 0; i < nodes_.size(); ++i) {
-        if (status[i] == STATUS::UNSTARTED) {
-            if (auto res = dfs(i); !res)
-                return std::unexpected(res.error());
+        if (status[i] != STATUS::UNSTARTED) {
+            continue;
+        }
+
+        stack.push_back({i, 0});
+        status[i] = STATUS::WORKING;
+
+        while (!stack.empty()) {
+            auto &frame = stack.back();
+            size_t u = frame.node;
+            const auto &node = nodes_[u];
+
+            if (frame.next_edge_idx < node.out_edges.size()) {
+                size_t v = node.out_edges[frame.next_edge_idx];
+                frame.next_edge_idx++; // Advance to next edge for when we return to u
+
+                if (status[v] == STATUS::UNSTARTED) {
+                    status[v] = STATUS::WORKING;
+                    stack.push_back({v, 0});
+                } else if (status[v] == STATUS::WORKING) {
+                    return std::unexpected(std::format("Cycle detected in the build graph at: {}", nodes_[v].path));
+                }
+            } else {
+                // All out edges processed
+                status[u] = STATUS::FINISHED;
+                order.push_back(u);
+                stack.pop_back();
+            }
         }
     }
 

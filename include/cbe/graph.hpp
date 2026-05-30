@@ -71,9 +71,20 @@ public:
      */
     Result<std::vector<size_t>> topo_sort() const;
 
+    struct SerializedData {
+        std::vector<Node> nodes;
+        std::vector<BuildStep> steps;
+        std::unordered_map<std::string_view, size_t> index;
+    };
+
+    void load_serialized_data(SerializedData &&data) {
+        nodes_ = std::move(data.nodes);
+        steps_ = std::move(data.steps);
+        index_ = std::move(data.index);
+    }
+
     friend Result<void> parse(class CBEBuilder &, const std::filesystem::path &);
-    friend Result<void> parse_bin(class CBEBuilder &);
-    friend Result<void> emit_bin(class CBEBuilder &);
+
 
 private:
     std::vector<Node> nodes_;
