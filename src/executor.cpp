@@ -10,6 +10,7 @@
 #include "cbe/utility.hpp"
 
 #include <atomic>
+#include <cassert>
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
