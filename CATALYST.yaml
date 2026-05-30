@@ -49,6 +49,10 @@ ccache:
     tooling:
       CC_LAUNCHER: ccache
       CXX_LAUNCHER: ccache
+debug:
+  manifest:
+    tooling:
+      CXXFLAGS: --std=c++23 -Wall -Wextra -O3 -g
 release:
   manifest:
     tooling:
