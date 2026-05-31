@@ -17,22 +17,17 @@ def benchmark_catalyst_builds():
     # Get paths dynamically to avoid hardcoded user home directories
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(script_dir)
-    cbe_bin = os.path.join(project_root, "build/common-ccache/cbe")
+    cbe_bin = os.path.join(project_root, "build/common-ccache-release/cbe")
     cbe_system = os.path.expanduser("~/.local/bin/cbe")
     tasks = [
         ("make", ["make", "-C", root_dir], True),
-        ("ninja -t clean", ["ninja", "-C", root_dir,
-         "-t", "clean"], False),  # Initial setup clean
+        ("ninja -t clean", ["ninja", "-C", root_dir, "-t", "clean"], False),  # Initial setup clean
         ("ninja", ["ninja", "-C", root_dir], True),
         ("ninja -t clean", ["ninja", "-C", root_dir, "-t", "clean"], True),
         ("cbe (system)", [cbe_system, "-C", root_dir], True),
         ("cbe (system) -t clean", [cbe_system, "-C", root_dir, "-t", "clean"], True),
-        ("cbe (system, mimalloc)", [cbe_system, "-C", root_dir], True),
-        ("cbe (system, mimalloc) -t clean", [cbe_system, "-C", root_dir, "-t", "clean"], True),
-        ("cbe (built, affinity)", [cbe_bin, "-C", root_dir], True),
-        ("cbe (built, affinity) -t clean", [cbe_bin, "-C", root_dir, "-t", "clean"], True),
-        ("cbe (built, affinity, mimalloc)", [cbe_bin, "-C", root_dir], True),
-        ("cbe (built, affinity, mimalloc) -t clean", [cbe_bin, "-C", root_dir, "-t", "clean"], True)
+        ("cbe (built)", [cbe_bin, "-C", root_dir], True),
+        ("cbe (built) -t clean", [cbe_bin, "-C", root_dir, "-t", "clean"], True),
     ]
 
     results = []
@@ -41,21 +36,13 @@ def benchmark_catalyst_builds():
 
     for label, cmd, should_time in tasks:
         try:
-            env = os.environ.copy()
-            if "mimalloc" in label:
-                env["LD_PRELOAD"] = "/usr/lib/x86_64-linux-gnu/libmimalloc.so"
-
             if should_time:
                 start = time.perf_counter()
-                if "cbe" in label:
-                    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
-                else:
-                    subprocess.run(cmd, check=True, capture_output=True, text=True, env=env)
+                subprocess.run(cmd, check=True, capture_output=True, text=True)
                 end = time.perf_counter()
                 results.append((label, f"{end - start:.4f}s"))
             else:
-                # Run without timing (equivalent to the untimed ninja clean in your bash)
-                subprocess.run(cmd, check=True, capture_output=True, env=env)
+                subprocess.run(cmd, check=True, capture_output=True)
 
         except FileNotFoundError:
             if should_time:
@@ -66,7 +53,13 @@ def benchmark_catalyst_builds():
             print(f"Error running {label}: {e.stderr}")
 
     # Layout Presentation
-    header = f"{'Build Command':<20} | {'Execution Time':<15}"
+    left_shift = 0
+    for label, _ in results:
+        left_shift = max(left_shift, len(label) + 2)
+    right_shift = 0
+    for _, duration in results:
+        right_shift = max(right_shift, len("Execution Time") + 2)
+    header = f"{'Build Command':<{left_shift}} | {'Execution Time':>{right_shift}}"
     divider = "-" * len(header)
 
     print(divider)
@@ -74,7 +67,7 @@ def benchmark_catalyst_builds():
     print(divider)
 
     for label, duration in results:
-        print(f"{label:<20} | {duration:<15}")
+        print(f"{label:<{left_shift}} | {duration:>{right_shift}}")
 
     print(divider)
     print("Note: 'make clean' was not measured.")
