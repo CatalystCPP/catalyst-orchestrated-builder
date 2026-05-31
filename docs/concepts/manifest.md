@@ -15,7 +15,7 @@ Definitions configure the toolchain and environment variables.
 Format: `DEF|<var>|<val>`
 
 - `DEF`: The introducer for a definition line. Must be capitalized.
-- `<var>`: The variable name (e.g., `cc`, `cflags`).
+- `<var>`: The variable name. While keys in `DEF` can be anything, only specific ones are respected by the build system.
 - `<val>`: The value assigned to the variable. Empty values use `DEF|<var>|`.
 
 #### Supported Variables
@@ -24,6 +24,8 @@ Format: `DEF|<var>|<val>`
 | ---- | ---- | ---- |
 | `cc` | The C compiler executable. | `/usr/bin/clang` |
 | `cxx` | The C++ compiler executable. | `/usr/bin/clang++` |
+| `linker` | The linker executable (defaults to `cxx` if empty/omitted). | `/usr/bin/clang++` or `/usr/bin/ld` |
+| `archiver` | The static archiver executable (defaults to `ar`, `libtool`, or `lib` based on OS if empty/omitted). | `/usr/bin/ar` |
 | `cflags` | Flags passed to `cc` steps. | `-O2 -Wall` |
 | `cxxflags` | Flags passed to `cxx` steps. | `-std=c++20 -O3` |
 | `ldflags` | Linker search paths and general flags. | `-L/usr/local/lib` |

@@ -1,6 +1,7 @@
 \documentclass[11pt]{article}
 
 % ---------- packages ----------
+\usepackage{comment}
 \usepackage[T1]{fontenc}
 \usepackage[utf8]{inputenc}
 \usepackage[a4paper,margin=1in]{geometry}
@@ -98,7 +99,7 @@
 \begin{flushleft}
 \large
 \textbf{Subject:} \texttt{cbe} v0.5.0 --- The Catalyst Build Executor\\[4pt]
-\textbf{Author:} Siddharth Mohanty
+\textbf{Author:} Siddharth Mohanty\\
 \textbf{Scope:} parser, build graph, execution engine, concurrency, I/O, codegen targets\\[4pt]
 \textbf{Language:} C++23 \\[4pt]
 \textbf{License:} Apache-2.0\\[14pt]
@@ -226,7 +227,7 @@ dependency model:
 \end{itemize}
 
 Global variables, compiler paths and flags, live in an associative
-\lstinline|Definitions| map (with a future transition to a cache-friendly sorted flat map planned), again keyed and valued by views:
+\lstinline|Definitions| map (with a future transition to a cache-friendly sorted flat map planned), again keyed and valued by views. While the keys in the definitions map can be any arbitrary string, only specific toolchain variables are respected and utilized by the build execution engine: \texttt{cc}, \texttt{cxx}, \texttt{linker}, \texttt{archiver}, \texttt{cxxflags}, \texttt{cflags}, \texttt{ldflags}, and \texttt{ldlibs}.
 
 \begin{lstlisting}
 using Definitions = std::unordered_map<std::string_view, std::string_view>;
@@ -291,8 +292,22 @@ OpaqueInput:
       '!' Path
 EOL:
       '\r'? '\n'
-Key, Tool:
+Key:
+      'archiver'
+      'cc'
+      'cflags'
+      'cxx'
+      'cxxflags'
+      'ldflags'
+      'ldlibs'
+      'linker'
       [^|\r\n]*
+Tool:
+      'ar'
+      'cc'
+      'cxx'
+      'ld'
+      'sld'
 Value, Output, String:
       [^\r\n]*
 Path:
@@ -304,7 +319,11 @@ Parsing (\texttt{parser.cpp}) walks the mapped buffer with
 tolerance, and dispatches on the line prefix. The two pipe positions are located
 with \lstinline@find('|')@ and the fields are taken as substrings without
 intermediate tokenization or memory allocation. Because the producer is trusted,
-malformed lines yield an error rather than recovery.
+malformed lines yield an error rather than recovery. Although the parser permits
+any arbitrary string as a \texttt{Key} for the sake of future extensibility,
+the execution engine strictly respects only a pre-defined set of variables:
+\texttt{cc}, \texttt{cxx}, \texttt{linker}, \texttt{archiver},
+\texttt{cxxflags}, \texttt{cflags}, \texttt{ldflags}, and \texttt{ldlibs}.
 
 \subsection{Dependency files}
 
@@ -391,7 +410,7 @@ auto get_sv = [&](StringRef ref) -> std::string_view {
 
 Because views point straight into the mapped cache, loading is effectively a
 pointer-arithmetic pass with no string copies. The header magic is
-platform-tagged (\texttt{CATBL001} on Linux, \texttt{CATBM001} on macOS, and \texttt{CATBW001} on Windows) so
+platform-tagged (\texttt{CATBL\#\#\#} on Linux, \texttt{CATBM\#\#\#} on macOS, and \texttt{CATBW\#\#\#} on Windows) so
 a cache produced on one platform is rejected rather than misinterpreted on
 another.
 
@@ -618,11 +637,19 @@ This is a clean alternative to a separate ``done'' flag plus a wakeup.
 
 \subsection{Optional heterogeneous-core hinting}
 
-Behind the \lstinline|heterogenous_core_affinity| feature flag, the worker biases
+On linux, behind the \lstinline|heterogenous_core_affinity| feature flag, the worker biases
 scheduling for hybrid (P-core/E-core) CPUs: before running a step whose estimate
 exceeds a threshold it lowers its niceness (a hint toward a performance core) and
 restores it afterward. It is a hint via \lstinline|setpriority|, not a hard
 affinity pin, which keeps it portable and non-fatal where it has no effect.
+\begin{lstlisting}
+    // static constexpr size_t TUNABLE_HEAVY_THRESHOLD = ...;
+    if (task.estimate > TUNABLE_HEAVY_THRESHOLD) {
+        setpriority(PRIO_PROCESS, 0, -5); // Hint: P-core
+    } else {
+        setpriority(PRIO_PROCESS, 0, 5); // Hint: E-core
+    }
+\end{lstlisting}
 
 % =====================================================================
 \section{Stat Cache}\label{sec:statcache}
@@ -723,7 +750,9 @@ compiler launchers.
 
 To quantitatively evaluate the architectural efficiency of CBE, comparative benchmarks were executed against GNU Make (v4.3) and Ninja (v1.11.1) on a high-density mock repository (\texttt{heavy\_repo}) designed to simulate a massive C++ codebase. The workload consists of 1,000 translation units arranged in a balanced binary tree dependency topology to maximize scheduler breadth and depth.
 
-All benchmarks were captured using \texttt{hyperfine} with 2 warmup runs. The tests were performed on an AMD Ryzen 9 5950X (16 physical cores, 32 hardware threads, P-core/E-core affinity flags disabled for standardization) running Linux Kernel 6.5.
+All benchmarks were captured using \texttt{hyperfine} with 2 warmup runs.
+The tests were performed on an Intel Core i9 14900KS (8 performance cores, 16 efficiency cores, 32 hardware threads)
+running Linux Kernel 7.0.0-15 on Ubuntu 26.04.
 
 \subsection{Full Incremental Build Execution}
 
@@ -742,7 +771,8 @@ The primary benchmark measures the makespan of a full incremental build loop, wh
 \end{tabular}
 \end{center}
 
-CBE achieves a statistically significant 11\% speedup over Ninja and a 14\% speedup over GNU Make. This acceleration is driven by three architectural vectors:
+CBE achieves a statistically significant 11\% speedup over Ninja and a 14\% speedup over GNU Make.
+This acceleration is driven by three architectural vectors:
 \begin{enumerate}
     \item \textbf{Binary Serialization Warm Path}: CBE bypasses text-based parsing of the build manifest on subsequent runs, loading the pre-compiled \texttt{.catalyst.bin} via in-place \lstinline|reinterpret_cast| pointers on memory-mapped pages.
     \item \textbf{High-Efficiency Lock-Free Scheduling}: Coordination between worker threads utilizes Dmitry Vyukov MPMC queues and atomic in-degree decrements. In contrast, Ninja relies on lock-heavy scheduling queues and serial state checks, which induce cacheline bouncing and lock contention at high thread counts (32 threads).
@@ -751,7 +781,9 @@ CBE achieves a statistically significant 11\% speedup over Ninja and a 14\% spee
 
 \subsection{Workspace Cleanup and CompDB Generation}
 
-To ensure complete transparency and prevent overstating CBE's performance profile, secondary tasks were benchmarked to identify overhead profiles. These tasks do not run compiler processes and are governed entirely by metadata read/write performance.
+To ensure complete transparency and prevent overstating CBE's performance profile, secondary tasks were benchmarked
+to identify overhead profiles. These tasks do not run compiler processes and are governed entirely by metadata
+read/write performance.
 
 \begin{center}
 \renewcommand{\arraystretch}{1.2}
@@ -771,13 +803,24 @@ To ensure complete transparency and prevent overstating CBE's performance profil
 \end{tabular}
 \end{center}
 
-On clean-only and JSON compilation database (CompDB) emission, Ninja outperforms CBE. This performance gap is explained by Ninja's internal metadata organization:
+On clean-only and JSON compilation database (CompDB) emission, Ninja outperforms CBE. This performance gap is explained
+by Ninja's internal metadata organization:
 \begin{itemize}
     \item \textbf{Internal Database Caching}: Ninja maintains a highly optimized, compact, append-only binary log (\texttt{.ninja\_log} and \texttt{.ninja\_deps}) directly inside its core execution loop, bypassing high-level standard library abstractions like \lstinline|std::filesystem| or \lstinline|std::flat_map| used by CBE.
     \item \textbf{Format Simplicity}: The Catalyst manifest requires parsing comma-separated lists and resolving multiple definition sets, whereas Ninja reads a pre-calculated, flat dependency structure designed for rapid traversal.
 \end{itemize}
 CBE, however, remains nearly an order of magnitude faster than GNU Make during workspace cleanup, because GMake must recursively traverse directories and evaluate rules sequentially.
 
+\callout{DOT emission}
+{
+We ommited to test DOT emission performance because it is not frequently used by
+typical development workflows and is primarily a debugging aid and is never used
+by the catalyst build system.
+Furthermore, CBE's DOT emitter emits the relationship between \emph{all} nodes
+in the graph rather than just targest like ninja uses.
+}
+
+\begin{comment}
 % =====================================================================
 \section{Summary of Techniques}
 
@@ -823,5 +866,7 @@ Lean default binary, no dead branches \\
 \vspace{6pt}
 \callout{Architectural Synthesis}
 {CBE achieves its execution velocity by operating over a borrowed, memory-mapped dependency DAG parsed exactly once, traversing this DAG with a lock-free, in-degree-driven, longest-job-first thread scheduler, isolating shared-mutex contention to a memoized stat cache, and statically compiling away unused configurations.}
+\end{comment}
 
 \end{document}
+

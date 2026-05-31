@@ -1,15 +1,13 @@
-all: report.pdf
+.PHONY: all watch clean view
 
-report.pdf: report.tex catalyst.tikz
-	pdflatex -interaction=nonstopmode $<
-	sleep 1
-	pdflatex -interaction=nonstopmode $<
-	rm -f **/*.aux *.aux report.log report.out
+all:
+	latexmk -pdf -silent -interaction=nonstopmode report.tex
 
-view:
-	open report.pdf > /dev/null 2>&1 &
+watch:
+	latexmk -pdf -pvc -silent -interaction=nonstopmode report.tex
 
 clean:
-	rm -f *.aux report.log report.out report.toc report.pdf
+	latexmk -C
 
-.PHONY: all view cleean report.pdf # make report.pdf phony so I can rerun freely
+view:
+	latexmk -pdf -pv report.tex

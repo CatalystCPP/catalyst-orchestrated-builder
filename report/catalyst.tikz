@@ -68,11 +68,13 @@
 \node[box] (core) at (10.8, 1.1) {CLI Dispatcher\\\& Workspace Engine};
 
 % Manifest inputs (Symmetrically aligned to avoid line crossings)
-\node[greenio] (manifest) at (10.8, 5.0) {\texttt{catalyst\_*.yaml}\\\footnotesize(text manifest)};
-\node[io] (lockfile) at (12.4, -3.0) {\texttt{catalyst.lock}\\\footnotesize(pinned deps)};
+\node[greenio] (manifest) at (9.2, 5.0) {\texttt{CATALYST.yaml}\\\footnotesize(project manifest)};
+\node[greenio] (workspace) at (12.4, 5.0) {\texttt{WORKSPACE.yaml}\\\footnotesize(workspace config)};
 \node[io] (ignore) at (9.2, -3.0) {\texttt{.catalystignore}\\\footnotesize(exclusion patterns)};
+\node[io] (lockfile) at (12.4, -3.0) {\texttt{catalyst.lock}\\\footnotesize(pinned deps)};
 
 \draw[ar] (manifest) -- (core);
+\draw[ar] (workspace) -- (core);
 \draw[ar] (lockfile) -- (core);
 \draw[ar] (ignore) -- (core);
 
@@ -82,8 +84,8 @@
 
 % ==================== 3. PIPELINES ====================
 \node[box] (hooks) at (18.0, 3.0) {Hook Engine\\\footnotesize pre / post / fail};
-\node[box] (depmgr) at (18.0, 1.0) {Dependency Resolver\\\footnotesize git / vcpkg / local / sys};
-\node[box] (generate_bin) at (18.0, -1.5) {Backend Generator\\\footnotesize Ninja / Make / CBE};
+\node[box] (generate_bin) at (18.0, 1.0) {Backend Generator\\\footnotesize Ninja / Make / CBE};
+\node[box] (depmgr) at (18.0, -1.5) {Dependency Resolver\\\footnotesize git / vcpkg / local / sys};
 
 \draw[ar] (core.east) -- (hooks.west);
 \draw[ar] (core.east) -- (depmgr.west);
@@ -91,7 +93,7 @@
 \draw[ar] (core.east) -- (generate_bin.west);
 
 % show lockfile generation as a side effect of dependency resolution
-\draw[ar, dashed, bend left=20] (depmgr) to node[above, font=\tiny] {re-emits} (lockfile);
+\draw[ar, dashed, bend left=20] (depmgr) to node[above, font=\tiny] {References} (lockfile);
 
 
 % ==================== 4. BACKEND BUILD FILES & ENGINES ====================
