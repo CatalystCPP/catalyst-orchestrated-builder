@@ -28,6 +28,8 @@
 \definecolor{str}{HTML}{0A3069}
 \definecolor{typ}{HTML}{8250DF}
 \definecolor{boxbg}{HTML}{EEF4FF}
+\definecolor{greenborder}{HTML}{1A7F37}
+\definecolor{greenbg}{HTML}{EDF7ED}
 
 % ---------- listings ----------
 \lstset{
@@ -112,9 +114,19 @@
 % =====================================================================
 \section{Overview and Design Invariants}
 
-CBE (the \emph{Catalyst Build Executor}) is a specialized, low-overhead execution backend for machine-generated build manifests emitted by the Catalyst meta-build system. Operating in the same structural layer as Ninja beneath CMake or Meson, CBE's architectural boundary separates high-level meta-configuration (such as profile resolution, compiler toolchain mapping, and dependency package retrieval) from the mechanical execution of directed acyclic dependency graphs (DAGs).
+CBE (the \emph{Catalyst Build Executor}) is a specialized, low-overhead execution
+backend for machine-generated build manifests emitted by the Catalyst meta-build
+system. Operating in the same structural layer as Ninja beneath CMake or Meson,
+CBE's architectural boundary separates high-level meta-configuration
+(such as profile resolution, compiler toolchain mapping, and dependency
+package retrieval) from the mechanical execution of directed acyclic dependency
+graphs.
 
-This decoupling is the foundational design constraint of the system. The meta-build layer processes compiler profiles and emits a flat, pipe-delimited manifest. CBE is optimized for a single objective: ingest this manifest and drive the implied transformations with minimal scheduling overhead, while enforcing robust incremental rebuilding guarantees.
+This decoupling is the foundational design constraint of the system. The
+meta-build layer processes compiler profiles and emits a flat, pipe-delimited
+manifest. Enabling CBE to be optimized for a single objective: ingest this
+manifest and drive the implied transformations with minimal scheduling overhead,
+while enforcing robust incremental rebuilding guarantees.
 
 Three engineering invariants govern the implementation:
 
@@ -136,7 +148,10 @@ Three engineering invariants govern the implementation:
 
 \callout{Architectural Invariant}
 {CBE operates strictly as a low-abstraction mechanical execution layer.
-By delegating compiler profile resolution and custom macro expansion to the Catalyst meta-build generator, the executor operates over regular, pipe-delimited targets, bypassing the computational overhead of generic macro parsing and variable evaluation loops.}
+By delegating compiler profile resolution and custom macro expansion to the
+Catalyst meta-build generator, the executor operates over regular,
+pipe-delimited targets, bypassing the computational overhead of generic macro
+parsing and variable evaluation loops.}
 
 % =====================================================================
 \section{System Architecture}
@@ -144,46 +159,16 @@ By delegating compiler profile resolution and custom macro expansion to the Cata
 The execution path is a short, linear pipeline. The CLI parses arguments into an
 \lstinline|ExecutorConfig|; the parser populates a \lstinline|CBEBuilder|
 (either from the binary cache or the text manifest); the builder hands a
-finished \lstinline|BuildGraph| to the \lstinline|Executor|, which either runs
-the parallel build or emits one of several auxiliary artifacts.
+finished \lstinline|BuildGraph| to the \lstinline|Executor|, which (optionally
+guided by historical execution cost loaded from \texttt{catalyst.estimates})
+either runs the parallel build or emits one of several auxiliary artifacts.
 
 \begin{center}
 \resizebox{\textwidth}{!}{%
-\begin{tikzpicture}[
-  font=\small,
-  box/.style={draw=accent,fill=boxbg,rounded corners,line width=0.7pt,
-    align=center,inner sep=6pt,minimum height=2.0em,text width=2.6cm},
-  io/.style={draw=slate,fill=codebg,rounded corners,line width=0.6pt,
-    align=center,inner sep=5pt,text width=2.3cm,font=\footnotesize},
-  ar/.style={-{Stealth[length=2.2mm]},line width=0.7pt,accentdark}
-]
-\node[io] (manifest) {\texttt{catalyst.build}\\\footnotesize(text manifest)};
-\node[io,below=4mm of manifest] (bin) {\texttt{.catalyst.bin}\\\footnotesize(binary cache)};
-
-\node[box,right=8mm of manifest,yshift=-3.5mm] (parse) {Parser\\\footnotesize text / binary};
-\node[box,right=7mm of parse] (builder) {CBEBuilder\\\footnotesize facade};
-\node[box,right=7mm of builder] (graph) {BuildGraph\\\footnotesize nodes + edges};
-\node[box,right=7mm of graph] (exec) {Executor\\\footnotesize scheduler};
-
-\node[io,right=8mm of exec,yshift=9mm] (out1) {build outputs};
-\node[io, right=8mm of exec, text width=3.3cm] (out2) {compile\_commands};
-\node[io,right=8mm of exec,yshift=-9mm] (out3) {DOT graph};
-
-\draw[ar] (manifest) -- (parse);
-\draw[ar] (bin) -- (parse);
-\draw[ar] (parse) -- (builder);
-\draw[ar] (builder) -- (graph);
-\draw[ar] (graph) -- (exec);
-\draw[ar] (exec) -- (out1);
-\draw[ar] (exec) -- (out2);
-\draw[ar] (exec) -- (out3);
-
-\begin{scope}[on background layer]
-\node[draw=codeframe,rounded corners,fill=codebg,fit=(parse)(exec),
-  inner sep=10pt,label={[slate,font=\footnotesize]above:CBE core}] {};
-\end{scope}
-\end{tikzpicture}}
+\input{catalyst.tikz}}
 \end{center}
+
+As illustrated in the toolchain diagram, CBE operates within the broader \textbf{Catalyst Toolchain} ecosystem. The input manifest \texttt{catalyst.build} is generated directly by the \textbf{Catalyst Build System}. On the first pass of a modified manifest, the CBE Parser parses the text representation and serializes it into the binary cache \texttt{.catalyst.bin} (re-emitting it for subsequent fast-path loads). Meanwhile, LPT task-scheduling metrics are fed from the \texttt{catalyst.estimates} file, which is maintained and updated by \textbf{catalyst ccache} to store historical compilation costs. During compiler dispatch, the actual compilation statistics are fed back into \textbf{catalyst ccache} to record and refine future task estimates. Additionally, because CBE operates on a simple, low-abstraction text manifest, alternative generators (\textbf{Other Meta Build Systems} like CMake or custom wrappers) can also emit the \texttt{catalyst.build} manifest to leverage CBE's high-performance parallel execution engine.
 
 The translation units map cleanly onto these stages. \texttt{cli\_args.cpp}
 produces the configuration; \texttt{parser.cpp} and \texttt{binary.cpp} feed the
@@ -274,16 +259,45 @@ entire graph.
 
 \subsection{The text manifest format}
 
-The manifest is line-oriented and pipe-delimited, chosen for trivially fast
-parsing rather than human authorship:
+The manifest is line-oriented and pipe-delimited. By stripping away
+conventional syntax boilerplate, the design achieves a highly minimal, format
+that is also trivially fast for the machine to parse, conforming to the following
+schema:
 
-\begin{itemize}
-  \item Lines beginning with \lstinline|#| are comments.
-  \item \lstinline|DEF|\,\lstinline=|=\,\textit{key}\,\lstinline=|=\,\textit{value}
-  declares a definition.
-  \item Any other line is a step: \textit{tool}\,\lstinline=|=\,\textit{inputs}\,%
-  \lstinline=|=\,\textit{output}.
-\end{itemize}
+\begin{lstlisting}[language=,basicstyle=\ttfamily\fontsize{7}{7}\selectfont]
+Manifest:
+      (Line EOL)*
+Line:
+      Comment
+      Definition
+      BuildStep
+      Empty
+Comment:
+      '#' String
+Definition:
+      'DEF' '|' Key '|' Value
+BuildStep:
+      Tool '|' Inputs '|' Output
+Empty:
+      <empty>
+Inputs:
+      (Input (',' Input)*)?
+Input:
+      ParsedInput
+      OpaqueInput
+ParsedInput:
+      Path
+OpaqueInput:
+      '!' Path
+EOL:
+      '\r'? '\n'
+Key, Tool:
+      [^|\r\n]*
+Value, Output, String:
+      [^\r\n]*
+Path:
+      [^,|\r\n]+
+\end{lstlisting}
 
 Parsing (\texttt{parser.cpp}) walks the mapped buffer with
 \lstinline|find('\n')|, strips a trailing \lstinline|\r| for Windows CRLF
@@ -305,6 +319,44 @@ dependency. The depfile is mapped through \lstinline|MappedUnfaultedFile| ---
 it is read exactly once, so prefaulting its pages would be wasted work (see
 \S\ref{sec:mmap}).
 
+The GCC/Clang Makefile-style dependency files conform to the following language schema:
+
+\begin{lstlisting}[language=,basicstyle=\ttfamily\fontsize{7}{7}\selectfont]
+Depfile:
+      Target ':' Dependents
+Target:
+      Path
+Dependents:
+      (Separator Path)* Separator?
+Separator:
+      Whitespace
+      Continuation
+Continuation:
+      '\' EOL Whitespace*
+Whitespace:
+      [ \t]+
+EOL:
+      '\r'? '\n'
+Path:
+      (EscapedSpace | [^\\\s:\r\n])+
+EscapedSpace:
+      '\' ' '
+\end{lstlisting}
+
+Below is an example of a generated \texttt{.d} file:
+
+\begin{lstlisting}[language=,basicstyle=\ttfamily\fontsize{7}{7}\selectfont]
+obj/binary_7d9517a626d9ccfc.o: \
+  /home/user/project/src/binary.cpp \
+  /home/user/project/include/cbe/binary.hpp \
+  /home/user/project/include/cbe/builder.hpp \
+  /home/user/project/include/cbe/graph.hpp \
+  /home/user/project/include/cbe/build_step.hpp \
+  /home/user/project/include/cbe/optional_vector.hpp \
+  /home/user/project/include/cbe/utility.hpp \
+  /home/user/project/include/cbe/file_handle.hpp
+\end{lstlisting}
+
 \subsection{Binary Caches}
 
 The most consequential parsing optimization is the binary cache. After a
@@ -322,7 +374,7 @@ if (std::filesystem::exists(".catalyst.bin") &&
 \end{lstlisting}
 
 The on-disk layout is a fixed header followed by definitions, nodes, and steps,
-with a \emph{string table} appended at the end of the file. All string-bearing
+with a \emph{string table} appended at the end of the file. Alongside strings and structural fields, each step serializes a 64-bit FNV-1a hash of its exact command-line invocation (\lstinline|command_hash|). This hash persists across runs, allowing the execution engine to quickly determine if compiler flags or arguments changed between builds, invalidating the step even if timestamps match. All string-bearing
 fields are stored as \lstinline|StringRef{offset, len}| pairs that index into
 that table. During serialization a \lstinline|StringBuffer| interns strings ---
 identical views collapse to a single entry via a
@@ -511,13 +563,15 @@ manifest.
 
 \subsection{Incremental rebuild decision}
 
-\lstinline|needs_rebuild| is the freshness check. A step rebuilds if its output
-is missing, or if the manifest, any parsed input, any depfile header, or any
-opaque dependency is at least as new as the output. Timestamp lookups are
-funneled through the \lstinline|StatCache| (\S\ref{sec:statcache}) to avoid
-repeated \lstinline|stat| calls on shared headers. Notably the manifest itself
-is a dependency of every step --- changing build flags correctly invalidates
-everything.
+\lstinline|needs_rebuild| is the freshness check. To verify if a step must run, the executor first generates the expected command-line arguments for the invocation and computes their 64-bit FNV-1a hash. This value is compared against the step's cached \lstinline|command_hash|:
+\begin{lstlisting}[language=C++]
+if (step.command_hash != current_hash) {
+    return true;
+}
+\end{lstlisting}
+This immediately catches flag modifications (e.g., changing \lstinline|-O2| to \lstinline|-O3| or modifying include search paths) even if all input file timestamps are unchanged.
+
+If the command hash matches, the executor checks if the output file is missing, or if the manifest itself, any parsed input, any depfile header, or any opaque dependency is at least as new as the output. Timestamp lookups are funneled through the \lstinline|StatCache| (\S\ref{sec:statcache}) to avoid repeated \lstinline|stat| calls on shared headers. Notably, the manifest itself acts as a dependency of every step, ensuring that structural alterations always trigger correct invalidations.
 
 % =====================================================================
 \section{Concurrency Primitives}

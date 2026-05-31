@@ -1,6 +1,6 @@
 all: report.pdf
 
-report.pdf: report.tex
+report.pdf: report.tex catalyst.tikz
 	pdflatex -interaction=nonstopmode $<
 	sleep 1
 	pdflatex -interaction=nonstopmode $<
