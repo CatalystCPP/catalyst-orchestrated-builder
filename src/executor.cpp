@@ -1,5 +1,6 @@
 #include "cbe/executor.hpp"
 
+#include "cbe/utils.hpp"
 #include "cbe/binary.hpp"
 #include "cbe/build_step.hpp"
 #include "cbe/builder.hpp"
@@ -237,16 +238,10 @@ Result<void> Executor::clean() {
 
 namespace {
 uint64_t hash_command(const std::vector<std::string> &args) {
-    constexpr auto FNV_OFFSET_BASIS = 14695981039346656037ULL;
-    constexpr auto FNV_PRIME = 1099511628211ULL;
     uint64_t hash = FNV_OFFSET_BASIS;
     for (const auto &arg : args) {
-        for (char c : arg) {
-            hash ^= static_cast<uint64_t>(c);
-            hash *= FNV_PRIME;
-        }
-        hash ^= static_cast<uint64_t>(' ');
-        hash *= FNV_PRIME;
+        hash = fnv1a_hash(arg, hash);
+        hash = fnv1a_hash(" ", hash);
     }
     return hash;
 }

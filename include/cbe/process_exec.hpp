@@ -6,8 +6,8 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <vector>
+#include <utility>
 namespace catalyst {
 /**
  * @brief Executes a subprocess.
@@ -20,6 +20,6 @@ namespace catalyst {
  */
 Result<std::pair<int, std::string>> process_exec(std::vector<std::string> &&args,
                          std::optional<std::string> working_dir = std::nullopt,
-                         std::optional<std::unordered_map<std::string, std::string>> env = std::nullopt,
+                         std::optional<std::vector<std::pair<std::string, std::string>>> env = std::nullopt,
                          bool capture_output = false);
 } // namespace catalyst

@@ -8,7 +8,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <unordered_map>
+#include "cbe/flat_map.hpp"
 #include <vector>
 
 namespace catalyst {
@@ -74,7 +74,7 @@ public:
     struct SerializedData {
         std::vector<Node> nodes;
         std::vector<BuildStep> steps;
-        std::unordered_map<std::string_view, size_t> index;
+        FlatHashMap<std::string_view, size_t, StringViewHash> index;
     };
 
     void load_serialized_data(SerializedData &&data) {
@@ -89,7 +89,7 @@ public:
 private:
     std::vector<Node> nodes_;
     std::vector<BuildStep> steps_;
-    std::unordered_map<std::string_view, size_t> index_;
+    FlatHashMap<std::string_view, size_t, StringViewHash> index_;
     std::vector<std::shared_ptr<void>> resources_;
 };
 

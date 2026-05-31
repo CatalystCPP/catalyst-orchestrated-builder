@@ -5,6 +5,11 @@
 
 namespace catalyst {
 
+struct StringRef {
+    uint64_t offset;
+    uint64_t len;
+};
+
 /**
  * @brief Parses the binary cache format (.catalyst.bin).
  *

@@ -7,14 +7,13 @@
 #include <optional>
 #include <reproc++/run.hpp>
 #include <string>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
 namespace catalyst {
 Result<std::pair<int, std::string>> process_exec(std::vector<std::string> &&args,
                          std::optional<std::string> working_dir,
-                         std::optional<std::unordered_map<std::string, std::string>> env,
+                         std::optional<std::vector<std::pair<std::string, std::string>>> env,
                          bool capture_output) {
     if (args.empty()) {
         return std::unexpected("Cannot execute empty command");

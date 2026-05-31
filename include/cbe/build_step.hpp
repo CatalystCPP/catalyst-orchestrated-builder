@@ -4,7 +4,7 @@
 
 #include <optional>
 #include <string_view>
-#include <unordered_map>
+#include <flat_map>
 #include <vector>
 
 namespace catalyst {
@@ -43,6 +43,6 @@ struct BuildStep {
 };
 
 /** @brief Global definitions/variables for the build (e.g., compiler flags, tool paths). */
-using Definitions = std::unordered_map<std::string_view, std::string_view>;
+using Definitions = std::flat_map<std::string_view, std::string_view>;
 
 } // namespace catalyst

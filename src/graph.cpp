@@ -16,8 +16,8 @@ namespace fs = std::filesystem;
 namespace catalyst {
 
 size_t BuildGraph::get_or_create_node(std::string_view path) {
-    if (auto it = index_.find(path); it != index_.end()) {
-        return it->second;
+    if (auto* ptr = index_.find(path)) {
+        return *ptr;
     }
 
     size_t id = nodes_.size();

@@ -12,7 +12,7 @@
 #include <fstream>
 #include <memory>
 #include <string_view>
-#include <unordered_map>
+#include "cbe/flat_map.hpp"
 #include <vector>
 
 // NOLINTBEGIN(cppcoreguidelines-pro-type-reinterpret-cast)
@@ -20,22 +20,17 @@ namespace catalyst {
 
 namespace {
 
-struct StringRef {
-    uint64_t offset;
-    uint64_t len;
-};
-
 class StringBuffer {
 public:
     StringRef add(std::string_view sv) {
-        if (auto it = buffer_cache.find(sv); it != buffer_cache.end()) {
-            return it->second;
+        if (auto* ptr = buffer_cache.find(sv)) {
+            return *ptr;
         }
         uint64_t offset = buffer_data.size();
         uint64_t len = sv.size();
         buffer_data.append(sv);
         StringRef ref = {.offset = offset, .len = len};
-        buffer_cache[sv] = ref;
+        buffer_cache.emplace(sv, ref);
         return ref;
     }
 
@@ -45,7 +40,7 @@ public:
 
 private:
     std::string buffer_data;
-    std::unordered_map<std::string_view, StringRef> buffer_cache;
+    FlatHashMap<std::string_view, StringRef, StringViewHash> buffer_cache;
 };
 
 constexpr size_t BIN_HEADER_MAGIC_BIT_LEN = 8;
@@ -107,7 +102,7 @@ Result<void> parse_bin(CBEBuilder &builder) {
 
     // 2. Nodes
     std::vector<BuildGraph::Node> nodes;
-    std::unordered_map<std::string_view, size_t> index;
+    FlatHashMap<std::string_view, size_t, StringViewHash> index;
     nodes.reserve(header->num_nodes);
     index.reserve(header->num_nodes);
 

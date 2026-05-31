@@ -227,10 +227,12 @@ dependency model:
 \end{itemize}
 
 Global variables, compiler paths and flags, live in an associative
-\lstinline|Definitions| map (with a future transition to a cache-friendly sorted flat map planned), again keyed and valued by views. While the keys in the definitions map can be any arbitrary string, only specific toolchain variables are respected and utilized by the build execution engine: \texttt{cc}, \texttt{cxx}, \texttt{linker}, \texttt{archiver}, \texttt{cxxflags}, \texttt{cflags}, \texttt{ldflags}, and \texttt{ldlibs}.
+\lstinline|Definitions| map (with a future transition to a cache-friendly sorted flat map planned), again keyed and
+valued by views. While the keys in the definitions map can be any arbitrary string, only specific toolchain variables
+are respected and utilized by the build execution engine: \texttt{cc}, \texttt{cxx}, \texttt{linker}, \texttt{archiver}, \texttt{cxxflags}, \texttt{cflags}, \texttt{ldflags}, and \texttt{ldlibs}.
 
 \begin{lstlisting}
-using Definitions = std::unordered_map<std::string_view, std::string_view>;
+using Definitions = std::flat_map<std::string_view, std::string_view>;
 \end{lstlisting}
 
 \subsection{Borrowed strings and resource lifetime}
@@ -396,8 +398,8 @@ The on-disk layout is a fixed header followed by definitions, nodes, and steps,
 with a \emph{string table} appended at the end of the file. Alongside strings and structural fields, each step serializes a 64-bit FNV-1a hash of its exact command-line invocation (\lstinline|command_hash|). This hash persists across runs, allowing the execution engine to quickly determine if compiler flags or arguments changed between builds, invalidating the step even if timestamps match. All string-bearing
 fields are stored as \lstinline|StringRef{offset, len}| pairs that index into
 that table. During serialization a \lstinline|StringBuffer| interns strings ---
-identical views collapse to a single entry via a
-\lstinline|unordered_map<string_view, StringRef>| cache --- so the table is
+identical views collapse to a single entry via a custom
+\lstinline|catalsyt::FlatHashMap<string_view, StringRef>| cache --- so the table is
 deduplicated. On load, the file is mapped, the header is
 \lstinline|reinterpret_cast| in place, and a closure resolves each
 \lstinline|StringRef| against the string base:
