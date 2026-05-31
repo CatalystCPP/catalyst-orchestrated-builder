@@ -8,6 +8,8 @@
 #endif
 
 #include <shared_mutex>
+#include <mutex>
+#include <array>
 #include <string>
 #include <thread>
 #include <vector>
@@ -43,8 +45,17 @@ class StatCache {
         bool operator<(const std::filesystem::path &other_path) const;
     };
 
-    std::vector<Entry> cache;
-    std::shared_mutex cache_mtx;
+    struct Bucket {
+        std::vector<Entry> entries;
+        std::shared_mutex mtx;
+    };
+
+    static constexpr size_t NUM_BUCKETS = 128;
+    std::array<Bucket, NUM_BUCKETS> buckets;
+
+    size_t get_bucket_index(const std::filesystem::path &p) const {
+        return std::hash<std::filesystem::path::string_type>{}(p.native()) % NUM_BUCKETS;
+    }
 
 public:
     /**
