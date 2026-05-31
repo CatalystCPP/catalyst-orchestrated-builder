@@ -19,6 +19,8 @@ struct JSON;
 struct ToolchainFlags {
     const std::vector<std::string> &cc;
     const std::vector<std::string> &cxx;
+    const std::vector<std::string> &linker;
+    const std::vector<std::string> &archiver;
     const std::vector<std::string> &cflags;
     const std::vector<std::string> &cxxflags;
     const std::vector<std::string> &ldflags;

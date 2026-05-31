@@ -148,6 +148,8 @@ catalyst::JSON Executor::buildCompdb(const std::vector<size_t> &order, const Bui
 
     const auto cc_vec = builder.getDefinitionOf<std::vector<std::string>>("cc");
     const auto cxx_vec = builder.getDefinitionOf<std::vector<std::string>>("cxx");
+    const auto linker_vec = builder.getLinkerVec(cxx_vec);
+    const auto archiver_vec = builder.getArchiverVec();
     const auto cflags_vec = builder.getDefinitionOf<std::vector<std::string>>("cflags");
     const auto cxxflags_vec = builder.getDefinitionOf<std::vector<std::string>>("cxxflags");
     const auto ldflags_vec = builder.getDefinitionOf<std::vector<std::string>>("ldflags");
@@ -155,6 +157,8 @@ catalyst::JSON Executor::buildCompdb(const std::vector<size_t> &order, const Bui
 
     ToolchainFlags tf = {.cc = cc_vec,
                          .cxx = cxx_vec,
+                         .linker = linker_vec,
+                         .archiver = archiver_vec,
                          .cflags = cflags_vec,
                          .cxxflags = cxxflags_vec,
                          .ldflags = ldflags_vec,
@@ -303,6 +307,8 @@ Result<void> Executor::emit_graph() {
 
     const auto cc_vec = builder.getDefinitionOf<std::vector<std::string>>("cc");
     const auto cxx_vec = builder.getDefinitionOf<std::vector<std::string>>("cxx");
+    const auto linker_vec = builder.getLinkerVec(cxx_vec);
+    const auto archiver_vec = builder.getArchiverVec();
     const auto cflags_vec = builder.getDefinitionOf<std::vector<std::string>>("cflags");
     const auto cxxflags_vec = builder.getDefinitionOf<std::vector<std::string>>("cxxflags");
     const auto ldflags_vec = builder.getDefinitionOf<std::vector<std::string>>("ldflags");
@@ -310,6 +316,8 @@ Result<void> Executor::emit_graph() {
 
     ToolchainFlags tf = {.cc = cc_vec,
                          .cxx = cxx_vec,
+                         .linker = linker_vec,
+                         .archiver = archiver_vec,
                          .cflags = cflags_vec,
                          .cxxflags = cxxflags_vec,
                          .ldflags = ldflags_vec,
@@ -367,6 +375,8 @@ Result<void> Executor::emit_commands() {
 
     const auto cc_vec = builder.getDefinitionOf<std::vector<std::string>>("cc");
     const auto cxx_vec = builder.getDefinitionOf<std::vector<std::string>>("cxx");
+    const auto linker_vec = builder.getLinkerVec(cxx_vec);
+    const auto archiver_vec = builder.getArchiverVec();
     const auto cflags_vec = builder.getDefinitionOf<std::vector<std::string>>("cflags");
     const auto cxxflags_vec = builder.getDefinitionOf<std::vector<std::string>>("cxxflags");
     const auto ldflags_vec = builder.getDefinitionOf<std::vector<std::string>>("ldflags");
@@ -374,6 +384,8 @@ Result<void> Executor::emit_commands() {
 
     ToolchainFlags tf = {.cc = cc_vec,
                          .cxx = cxx_vec,
+                         .linker = linker_vec,
+                         .archiver = archiver_vec,
                          .cflags = cflags_vec,
                          .cxxflags = cxxflags_vec,
                          .ldflags = ldflags_vec,
@@ -426,6 +438,8 @@ struct Executor::ExecuteContext {
 
     const std::vector<std::string> cc_vec;
     const std::vector<std::string> cxx_vec;
+    const std::vector<std::string> linker_vec;
+    const std::vector<std::string> archiver_vec;
     const std::vector<std::string> cflags_vec;
     const std::vector<std::string> cxxflags_vec;
     const std::vector<std::string> ldflags_vec;
@@ -436,14 +450,16 @@ struct Executor::ExecuteContext {
     ExecuteContext(size_t node_count,
                    std::vector<std::string> cc,
                    std::vector<std::string> cxx,
+                   std::vector<std::string> linker,
+                   std::vector<std::string> archiver,
                    std::vector<std::string> cflags,
                    std::vector<std::string> cxxflags,
                    std::vector<std::string> ldflags,
                    std::vector<std::string> ldlibs,
                    catalyst::BuildGraph bg)
         : ready_queue(node_count), progress_queue(8192), in_degrees(node_count), total_nodes(node_count),
-          cc_vec(std::move(cc)), cxx_vec(std::move(cxx)), cflags_vec(std::move(cflags)),
-          cxxflags_vec(std::move(cxxflags)), ldflags_vec(std::move(ldflags)), ldlibs_vec(std::move(ldlibs)),
+          cc_vec(std::move(cc)), cxx_vec(std::move(cxx)), linker_vec(std::move(linker)), archiver_vec(std::move(archiver)),
+          cflags_vec(std::move(cflags)), cxxflags_vec(std::move(cxxflags)), ldflags_vec(std::move(ldflags)), ldlibs_vec(std::move(ldlibs)),
           build_graph(std::move(bg)) {
     }
 };
@@ -494,7 +510,7 @@ Executor::build_command_args(const BuildStep &step, bool dry_run_mode, const Too
         args.emplace_back("-o");
         args.emplace_back(step.output);
     } else if (step.tool == "ld") {
-        add_parts(flags.cxx);
+        add_parts(flags.linker);
         static constexpr auto TUNABLE_INPUT_SZ = 50;
         std::filesystem::path rsp_path = std::filesystem::path(step.output).replace_extension(".rsp");
 
@@ -527,11 +543,24 @@ Executor::build_command_args(const BuildStep &step, bool dry_run_mode, const Too
         add_parts(flags.ldflags);
         add_parts(flags.ldlibs);
     } else if (step.tool == "ar") {
-        args.insert(args.end(), {"ar", "rcs", std::string(step.output)});
+        add_parts(flags.archiver);
+        if (!flags.archiver.empty()) {
+            const auto &cmd = flags.archiver.front();
+            if (cmd.ends_with("ar") || cmd.ends_with("ar.exe") || flags.archiver.size() == 1) {
+                args.emplace_back("rcs");
+                args.emplace_back(step.output);
+            } else if (flags.archiver.back() == "/out:") {
+                args.back() += std::string(step.output);
+            } else {
+                args.emplace_back(step.output);
+            }
+        } else {
+            args.insert(args.end(), {"ar", "rcs", std::string(step.output)});
+        }
         for (const auto &in : inputs)
             args.emplace_back(in);
     } else if (step.tool == "sld") {
-        add_parts(flags.cxx);
+        add_parts(flags.linker);
         args.emplace_back("-shared");
         for (const auto &in : inputs)
             args.emplace_back(in);
@@ -647,6 +676,8 @@ int Executor::process_step(size_t node_idx, ExecuteContext &ctx, StatCache &stat
 
         ToolchainFlags tf = {.cc = ctx.cc_vec,
                              .cxx = ctx.cxx_vec,
+                             .linker = ctx.linker_vec,
+                             .archiver = ctx.archiver_vec,
                              .cflags = ctx.cflags_vec,
                              .cxxflags = ctx.cxxflags_vec,
                              .ldflags = ctx.ldflags_vec,
@@ -856,9 +887,16 @@ Result<void> Executor::execute() {
         return std::unexpected(topo_res.error());
     }
 
+    const auto cc_vec = builder.getDefinitionOf<std::vector<std::string>>("cc");
+    const auto cxx_vec = builder.getDefinitionOf<std::vector<std::string>>("cxx");
+    const auto linker_vec = builder.getLinkerVec(cxx_vec);
+    const auto archiver_vec = builder.getArchiverVec();
+
     ExecuteContext ctx(build_graph.nodes().size(),
-                       builder.getDefinitionOf<std::vector<std::string>>("cc"),
-                       builder.getDefinitionOf<std::vector<std::string>>("cxx"),
+                       cc_vec,
+                       cxx_vec,
+                       linker_vec,
+                       archiver_vec,
                        builder.getDefinitionOf<std::vector<std::string>>("cflags"),
                        builder.getDefinitionOf<std::vector<std::string>>("cxxflags"),
                        builder.getDefinitionOf<std::vector<std::string>>("ldflags"),
@@ -922,6 +960,8 @@ Result<void> Executor::execute() {
     std::string final_output_name;
     ToolchainFlags tf = {.cc = ctx.cc_vec,
                          .cxx = ctx.cxx_vec,
+                         .linker = ctx.linker_vec,
+                         .archiver = ctx.archiver_vec,
                          .cflags = ctx.cflags_vec,
                          .cxxflags = ctx.cxxflags_vec,
                          .ldflags = ctx.ldflags_vec,

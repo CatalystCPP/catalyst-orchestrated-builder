@@ -81,6 +81,28 @@ private:
         }
     }
 
+    std::vector<std::string> getLinkerVec(const auto &cxx_vec) const {
+        auto linker_vec = getDefinitionOf<std::vector<std::string>>("linker");
+        if (linker_vec.empty() || (linker_vec.size() == 1 && linker_vec[0].empty())) {
+            linker_vec = cxx_vec;
+        }
+        return linker_vec;
+    }
+
+    std::vector<std::string> getArchiverVec() const {
+        auto archiver_vec = getDefinitionOf<std::vector<std::string>>("archiver");
+        if (archiver_vec.empty() || (archiver_vec.size() == 1 && archiver_vec[0].empty())) {
+#if defined(__APPLE__)
+            archiver_vec = std::vector<std::string>{"libtool", "-static", "-no_warning_for_no_symbols", "-o"};
+#elif defined(_WIN32)
+            archiver_vec = std::vector<std::string>{"lib", "/nologo", "/out:"};
+#else
+            archiver_vec = std::vector<std::string>{"ar"};
+#endif
+        }
+        return archiver_vec;
+    }
+
     BuildGraph graph_;
     Definitions definitions_;
 };
