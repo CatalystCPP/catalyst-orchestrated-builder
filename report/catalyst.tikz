@@ -146,7 +146,7 @@
 \node[io] (out3) at (42.9, -2.5) {DOT Graph\\\footnotesize(dependency visualization)};
 \node[io] (out4) at (42.9, -4.5) {Clean\\\footnotesize(intermediate removal)};
 
-\node[greenio] (estimates) at (38.1, 0.5) {\texttt{catalyst.estimates}\\\footnotesize(work estimates)};
+\node[greenio] (estimates) at (38.1, 0.5) {\texttt{work estimates}};
 \node[box] (cccache) at (38.1, 2.5) {Catalyst ccache};
 
 \draw[ar] (cbe_exec) -- (out1);
@@ -155,7 +155,10 @@
 \draw[ar] (cbe_exec) -- (out4);
 
 \draw[ar] (cccache) -- (estimates);
-\draw[-{Stealth[length=2.2mm]}, line width=0.7pt, dashed, black] (estimates) -- (cbe_exec);
+\draw[-{Stealth[length=2.2mm]}, line width=0.7pt, dashed, black]
+    (cbe_exec) to[bend left=15] node[left, pos=0.5] {updates} (estimates);
+\draw[-{Stealth[length=2.2mm]}, line width=0.7pt, dashed, black]
+    (estimates) to[bend left=15] node[right, pos=0.5] {informs} (cbe_exec);
 \draw[-{Stealth[length=2.2mm]}, line width=0.7pt, dashed, black, bend left=30] (out1) to (cccache);
 
 
