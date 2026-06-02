@@ -1,6 +1,6 @@
 #pragma once
 
-#if FF_cbe__estimates
+#if FF_cob__estimates
 
 #include "cob/file_handle.hpp"
 

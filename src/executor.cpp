@@ -32,7 +32,7 @@
 #include <unistd.h>
 #include <vector>
 
-#if FF_cbe__heterogenous_core_affinity
+#if FF_cob__heterogenous_core_affinity
 #include <sys/resource.h>
 #endif
 
@@ -204,7 +204,7 @@ bool isNewer(const std::filesystem::path &new_file, const std::filesystem::path 
 }
 
 Executor::Executor(COBBuilder &&builder, const ExecutorConfig &config) : builder(std::move(builder)), config(config) {
-#if FF_cbe__estimates
+#if FF_cob__estimates
     estimator = std::make_unique<WorkEstimate>(config.estimates_file);
 #endif
 }
@@ -573,7 +573,7 @@ Executor::build_command_args(const BuildStep &step, bool dry_run_mode, const Too
  */
 void Executor::push_ready(size_t idx, ExecuteContext &ctx) {
     size_t est = 0;
-#if FF_cbe__estimates
+#if FF_cob__estimates
     const auto &node = ctx.build_graph.nodes()[idx];
     if (node.step_id.has_value()) {
         est = estimator->getWorkEstimate(ctx.build_graph.steps()[*node.step_id].output);
@@ -686,16 +686,16 @@ int Executor::process_step(size_t node_idx, ExecuteContext &ctx, StatCache &stat
 
             auto args = build_command_args(step, false, tf);
 
-#if FF_cbe__profiling
+#if FF_cob__profiling
             auto start = std::chrono::steady_clock::now();
 #endif
-#if FF_cbe__logging
+#if FF_cob__logging
             bool capture_output = !config.build_log_file.empty();
 #else
             bool capture_output = false;
 #endif
             auto res = catalyst::process_exec(std::move(args), std::nullopt, std::nullopt, capture_output);
-#if FF_cbe__profiling
+#if FF_cob__profiling
             auto end = std::chrono::steady_clock::now();
             std::chrono::duration<double> diff = end - start;
             {
@@ -709,7 +709,7 @@ int Executor::process_step(size_t node_idx, ExecuteContext &ctx, StatCache &stat
 
             if (res) {
                 auto [ec, output] = *res;
-#if FF_cbe__logging
+#if FF_cob__logging
                 if (capture_output && !output.empty()) {
                     std::string console_msg;
                     if (!config.silent || ec != 0) {
@@ -754,7 +754,7 @@ int Executor::process_step(size_t node_idx, ExecuteContext &ctx, StatCache &stat
                 return 1;
             }
         }
-#if FF_cbe__logging
+#if FF_cob__logging
         else {
             std::string msg = std::format("Skipping {} (up to date)\n", step.output);
             while (!ctx.progress_queue.enqueue({msg, "", false, false}))
@@ -775,7 +775,7 @@ int Executor::process_step(size_t node_idx, ExecuteContext &ctx, StatCache &stat
  * to sleep when the queue is empty. Implements deadlock detection to resolve stalled graphs.
  */
 void Executor::worker_loop(ExecuteContext &ctx, StatCache &stat_cache, bool is_tty, size_t thread_count) {
-#if FF_cbe__heterogenous_core_affinity
+#if FF_cob__heterogenous_core_affinity
     static constexpr size_t TUNABLE_HEAVY_THRESHOLD = 100;
 #endif
 
@@ -817,7 +817,7 @@ void Executor::worker_loop(ExecuteContext &ctx, StatCache &stat_cache, bool is_t
             }
         }
 
-#if FF_cbe__heterogenous_core_affinity
+#if FF_cob__heterogenous_core_affinity
         if (task.estimate > TUNABLE_HEAVY_THRESHOLD) {
             setpriority(PRIO_PROCESS, 0, -5); // Hint: P-core
         } else {
@@ -827,7 +827,7 @@ void Executor::worker_loop(ExecuteContext &ctx, StatCache &stat_cache, bool is_t
 
         int result = process_step(task.node_idx, ctx, stat_cache, is_tty);
 
-#if FF_cbe__heterogenous_core_affinity
+#if FF_cob__heterogenous_core_affinity
         setpriority(PRIO_PROCESS, 0, 0); // Reset to default
 #endif
 
@@ -914,7 +914,7 @@ Result<void> Executor::execute() {
     for (size_t i = 0; i < ctx.in_degrees.size(); ++i) {
         if (ctx.in_degrees[i].load(std::memory_order_relaxed) == 0) {
             size_t est = 0;
-#if FF_cbe__estimates
+#if FF_cob__estimates
             const auto &node = ctx.build_graph.nodes()[i];
             if (node.step_id.has_value()) {
                 est = estimator->getWorkEstimate(ctx.build_graph.steps()[*node.step_id].output);
@@ -939,7 +939,7 @@ Result<void> Executor::execute() {
     StatCache stat_cache;
     bool is_tty = ::isatty(STDOUT_FILENO) != 0;
 
-#if FF_cbe__logging
+#if FF_cob__logging
     std::ofstream *log_file_ptr = nullptr;
     std::ofstream log_file;
     if (!config.build_log_file.empty()) {
@@ -981,7 +981,7 @@ Result<void> Executor::execute() {
         thread_count = 1;
 
     std::jthread progress_thread([&ctx
-#if FF_cbe__logging
+#if FF_cob__logging
                                   ,
                                   log_file_ptr
 #endif
@@ -1014,7 +1014,7 @@ Result<void> Executor::execute() {
                     std::cout.flush();
                 }
             }
-#if FF_cbe__logging
+#if FF_cob__logging
             if (!ev.log_message.empty() && log_file_ptr && log_file_ptr->is_open()) {
                 (*log_file_ptr) << ev.log_message;
                 log_file_ptr->flush();

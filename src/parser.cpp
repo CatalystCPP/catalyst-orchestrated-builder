@@ -55,7 +55,7 @@ Result<void> parse_step(const std::string_view line, COBBuilder &builder) {
 } // namespace
 
 Result<void> parse(COBBuilder &builder, const std::filesystem::path &path) {
-#if FF_cbe__binary == 1
+#if FF_cob__binary == 1
     if (std::filesystem::exists(".catalyst.bin") &&
         std::filesystem::last_write_time(".catalyst.bin") > std::filesystem::last_write_time(path)) {
         return parse_bin(builder);
@@ -100,7 +100,7 @@ Result<void> parse(COBBuilder &builder, const std::filesystem::path &path) {
 
         start = end + 1;
     }
-#if FF_cbe__binary
+#if FF_cob__binary
     auto _ = emit_bin(builder);
 #endif
     return {};

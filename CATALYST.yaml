@@ -2,11 +2,11 @@ common:
   meta:
     min_ver: 1.1.0
   manifest:
-    name: cbe
+    name: cob
     type: BINARY
     version: 0.3.0
-    description: The Catalyst Build Executor
-    provides: cbe
+    description: The Catalyst Orchestrated Builder
+    provides: cob
     tooling:
       CC: clang
       CXX: clang++
@@ -39,9 +39,9 @@ test:
       build: build_tests
 benchmark:
   manifest:
-    name: cbe_benchmark
-    provides: cbe_benchmark
-    description: CBE with Benchmarking Flags Enabled
+    name: cob_benchmark
+    provides: cob_benchmark
+    description: COB with Benchmarking Flags Enabled
     tooling:
       CXXFLAGS: -std=c++23 -Wall -Wextra -O0 -g -fno-omit-frame-pointer
 ccache:
