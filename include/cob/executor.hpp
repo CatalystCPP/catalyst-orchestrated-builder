@@ -74,6 +74,18 @@ public:
     bool changed_since(const std::filesystem::path &input, std::filesystem::file_time_type output_time);
 
     /**
+     * @brief Drops any cached entry for a path so the next query re-stats the file.
+     *
+     * Must be called after a build step rewrites its output: an intermediate artifact
+     * (e.g. a `.o` or `.a`) is both the output of one step and the input of a downstream
+     * step, and its modtime may have been cached (with a now-stale value) before the
+     * rebuild. Without invalidation the downstream step would see the pre-build time and
+     * skip its own rebuild.
+     * @param p The file path to invalidate.
+     */
+    void invalidate(const std::filesystem::path &p);
+
+    /**
      * @brief Returns the number of entries in the cache (primarily for unit tests).
      */
     size_t get_cache_size() const;

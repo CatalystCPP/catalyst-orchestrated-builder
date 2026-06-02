@@ -45,6 +45,17 @@ bool StatCache::changed_since(const std::filesystem::path &input, std::filesyste
     return input_time >= output_time;
 }
 
+void StatCache::invalidate(const std::filesystem::path &p) {
+    size_t idx = get_bucket_index(p);
+    Bucket &b = buckets[idx];
+
+    std::lock_guard<std::shared_mutex> write_lock(b.mtx);
+    auto it = std::ranges::lower_bound(b.entries, p, {}, &Entry::path);
+    if (it != b.entries.end() && it->path == p) {
+        b.entries.erase(it);
+    }
+}
+
 size_t StatCache::get_cache_size() const {
     size_t total = 0;
     for (size_t i = 0; i < NUM_BUCKETS; ++i) {
