@@ -15,6 +15,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h> // AT_FDCWD
@@ -187,7 +188,8 @@ Result<void> Executor::clean() {
 }
 
 namespace {
-uint64_t hash_command(const std::vector<std::string> &args) {
+[[clang::always_inline]]
+inline uint64_t hashCommand(std::span<const std::string> args) {
     uint64_t hash = FNV_OFFSET_BASIS;
     for (const auto &arg : args) {
         hash = fnv1a_hash(arg, hash);
@@ -202,8 +204,8 @@ bool inline Executor::needs_rebuild(const BuildStep &step,
                                     StatCache &stat_cache,
                                     const ToolchainFlags &flags,
                                     uint64_t *out_hash) const {
-    auto args = build_command_args(step, true, flags);
-    uint64_t current_hash = hash_command(args);
+    std::vector<std::string> args = build_command_args(step, true, flags);
+    uint64_t current_hash = hashCommand(std::span{args.data(), args.size()});
 
     if (out_hash) {
         *out_hash = current_hash;
