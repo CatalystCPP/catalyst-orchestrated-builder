@@ -1072,9 +1072,9 @@ Result<void> Executor::execute() {
                                      local_tm.tm_sec,
                                      subsec_ns);
         if (is_tty) {
-            std::println("\r\033[K[{}] \033[32m[CBE FINISHED: {}]\033[0m", timestamp, final_output_name);
+            std::println("\r\033[K[{}] \033[32m[COB FINISHED: {}]\033[0m", timestamp, final_output_name);
         } else {
-            std::println("[{}] [CBE FINISHED: {}]", timestamp, final_output_name);
+            std::println("[{}] [COB FINISHED: {}]", timestamp, final_output_name);
         }
     }
 

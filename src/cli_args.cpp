@@ -99,7 +99,7 @@ Result<CliArgs> cliArgs(const int argc, const char *const *argv) {
 
 void printHelp() {
     using std::println;
-    println("Usage: cbe [options]");
+    println("Usage: " CATALYST_PROJ_NAME " [options]");
     println("Options:");
     println("  -h, --help                    Show this help message");
     println("  -v, --version                 Show version");
@@ -124,6 +124,6 @@ void printHelp() {
 }
 
 void printVersion() {
-    std::println("cbe {}", CATALYST_PROJ_VER);
+    std::println("{} version {}", CATALYST_PROJ_NAME, CATALYST_PROJ_VER);
 }
 } // namespace catalyst
