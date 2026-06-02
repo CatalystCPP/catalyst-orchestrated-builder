@@ -28,6 +28,9 @@ common:
     - profiling: false
     - logging: false
     - heterogenous_core_affinity: false
+    - json_impl:
+        defualt: false
+        files: [src/json.cpp, include/cob/json.hpp]
     - estimates:
         default: false
         files: [src/work_estimate.cpp, include/cob/work_estimate.hpp]

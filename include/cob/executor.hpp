@@ -16,7 +16,9 @@
 
 namespace catalyst {
 
+#if FF_cob__json_impl
 struct JSON;
+#endif
 
 struct ToolchainFlags {
     const std::vector<std::string> &cc;

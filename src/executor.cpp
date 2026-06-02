@@ -84,6 +84,7 @@ inline std::string escapeJSONString(std::string_view s) {
     return res;
 }
 
+#if FF_cob__json_impl
 void dumpJSONInternal(const catalyst::JSON &j, std::string &buf) {
     switch (j.type) {
         case catalyst::JSON::Type::Null:
@@ -140,6 +141,7 @@ void dumpJSON(const catalyst::JSON &j, std::ofstream &os) {
     dumpJSONInternal(j, buf);
     os.write(buf.data(), static_cast<long>(buf.size()));
 }
+#endif
 
 bool isNewer(const std::filesystem::path &new_file, const std::filesystem::path &old_file) {
     std::error_code ec;
