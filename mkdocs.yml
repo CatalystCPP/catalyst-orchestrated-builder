@@ -1,2 +1,3 @@
 site_name: Catalyst Orchestrated Builder
-theme: material
+theme:
+  name: material
