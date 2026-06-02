@@ -145,7 +145,7 @@ void writeCompdb(const catalyst::JSON &compdb, std::ofstream &out) {
     dumpJSON(compdb, out);
 }
 
-catalyst::JSON Executor::buildCompdb(const std::vector<size_t> &order, const BuildGraph &build_graph) const {
+catalyst::JSON Executor::buildCompdb(const BuildGraph &build_graph) const {
     using JSON = catalyst::JSON;
     JSON compdb = JSON::array();
     auto cwd = std::filesystem::current_path().string();
@@ -167,9 +167,7 @@ catalyst::JSON Executor::buildCompdb(const std::vector<size_t> &order, const Bui
                          .cxxflags = cxxflags_vec,
                          .ldflags = ldflags_vec,
                          .ldlibs = ldlibs_vec};
-
-    for (size_t node_idx : order) {
-        const auto &node = build_graph.nodes()[node_idx];
+    for (const auto &node : build_graph.nodes()) {
         if (!node.step_id.has_value())
             continue;
         const auto &step = build_graph.steps()[*node.step_id];
@@ -191,7 +189,6 @@ catalyst::JSON Executor::buildCompdb(const std::vector<size_t> &order, const Bui
         entry["output"] = step.output;
         compdb.push_back(entry);
     }
-
     return compdb;
 }
 
@@ -349,15 +346,9 @@ Result<void> Executor::emit_graph() {
 
 Result<void> Executor::emit_compdb() {
     catalyst::BuildGraph build_graph = builder.emit_graph();
-    std::vector<size_t> order;
-    auto res = build_graph.topo_sort();
-    if (!res)
-        return std::unexpected(res.error());
-    order = *res;
-
-    catalyst::JSON compdb = buildCompdb(order, build_graph);
 
     std::ofstream f("compile_commands.json");
+    const catalyst::JSON compdb = buildCompdb(build_graph);
     writeCompdb(compdb, f);
     return {};
 }
