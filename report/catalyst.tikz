@@ -1,14 +1,3 @@
-% =====================================================================
-% Catalyst Build System & Toolchain Architecture Diagram
-% Include this file in your main LaTeX document using:
-%   \input{catalyst.tikz}
-% Make sure to load the following packages in your preamble:
-% \usepackage{tikz}
-% \usetikzlibrary{positioning,fit,backgrounds,arrows.meta}
-% \usepackage{xcolor}
-% =====================================================================
-
-% Color Definitions (Matching the premium palette from the CBE diagram)
 \definecolor{accent}{HTML}{1A73E8}
 \definecolor{boxbg}{HTML}{F1F3F4}
 \definecolor{slate}{HTML}{5F6368}
@@ -30,11 +19,9 @@
   ar/.style={-{Stealth[length=2.2mm]},line width=0.7pt,accentdark}
 ]
 
-% ==================== 1. INPUT FILES ====================
-\node[greenio] (cbe_file) at (0.0, 1.0) {\texttt{catalyst.build}\\\footnotesize(CBE text manifest)};
-\node[io] (cbe_bin) at (0.0, -1.0) {\texttt{.catalyst.bin}\\\footnotesize(CBE binary cache)};
+\node[greenio] (cbe_file) at (0.0, 1.0) {\texttt{catalyst.build}\\\footnotesize(COB text manifest)};
+\node[io] (cbe_bin) at (0.0, -1.0) {\texttt{.catalyst.bin}\\\footnotesize(COB binary cache)};
 
-% ==================== 2. CATALYST BUILD EXECUTOR (CBE) ====================
 \node[box] (cbe_parse) at (4.3, 0.0) {Parser\\\footnotesize text / binary};
 \node[box] (cbe_builder) at (7.9, 0.0) {COBBuilder\\\footnotesize facade};
 \node[box] (cbe_graph) at (11.5, 0.0) {BuildGraph\\\footnotesize nodes + edges};
@@ -47,12 +34,11 @@
 \draw[ar] (cbe_builder) -- (cbe_graph);
 \draw[ar] (cbe_graph) -- (cbe_exec);
 
-% Fit for CBE Subsystem
 \begin{scope}[on background layer]
   \node[draw=slate, line width=1.0pt, rounded corners, fill=codebg,
         fit=(cbe_parse)(cbe_exec), inner sep=10pt] (cbe_group) {};
 \end{scope}
-\node[slate, font=\footnotesize\bfseries, above=4pt of cbe_group] (cbe_title) {Catalyst Build Executor (CBE)};
+\node[slate, font=\footnotesize\bfseries, above=4pt of cbe_group] (cbe_title) {Catalyst Orchestrated Builder (COB)};
 
 % ==================== 3. OUTPUTS & BACKENDS ====================
 \node[io] (out1) at (19.9, 4.0) {Compiler Dispatch\\\footnotesize(compiler processes)};

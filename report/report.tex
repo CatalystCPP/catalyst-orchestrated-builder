@@ -67,7 +67,7 @@
 \pagestyle{fancy}
 \fancyhf{}
 \renewcommand{\headrulewidth}{0.4pt}
-\lhead{\small\color{slate}Catalyst Build Executor}
+\lhead{\small\color{slate}Catalyst Orchestrated Builder}
 \rhead{\small\color{slate}Architecture \& Techniques}
 \cfoot{\small\color{slate}\thepage}
 
@@ -89,7 +89,7 @@
 \vspace*{2.2cm}
 \begin{flushleft}
 {\color{accent}\rule{\linewidth}{2pt}}\\[10pt]
-{\Huge\bfseries\color{accentdark} Catalyst Build Executor}\\[8pt]
+{\Huge\bfseries\color{accentdark} Catalyst Orchestrated Builder}\\[8pt]
 {\LARGE\color{ink} Architecture and Implementation Techniques}\\[14pt]
 {\large\color{slate} A High-Performance Parallel Execution Engine for Low-Level Dependency Graphs in C++23}\\[6pt]
 {\color{accent}\rule{\linewidth}{1pt}}
@@ -98,7 +98,7 @@
 \vfill
 \begin{flushleft}
 \large
-\textbf{Subject:} \texttt{cbe} v0.5.0 --- The Catalyst Build Executor\\[4pt]
+\textbf{Subject:} \texttt{cob} v0.3.0 --- The Catalyst Orchestrated Builder \\[4pt]
 \textbf{Author:} Siddharth Mohanty\\
 \textbf{Scope:} parser, build graph, execution engine, concurrency, I/O, codegen targets\\[4pt]
 \textbf{Language:} C++23 \\[4pt]
@@ -115,17 +115,17 @@
 % =====================================================================
 \section{Overview and Design Invariants}
 
-CBE (the \emph{Catalyst Build Executor}) is a specialized, low-overhead execution
+COB (the \emph{Catalyst Orchestrated Builder}) is a specialized, low-overhead execution
 backend for machine-generated build manifests emitted by the Catalyst meta-build
 system. Operating in the same structural layer as Ninja beneath CMake or Meson,
-CBE's architectural boundary separates high-level meta-configuration
+COB's architectural boundary separates high-level meta-configuration
 (such as profile resolution, compiler toolchain mapping, and dependency
 package retrieval) from the mechanical execution of directed acyclic dependency
 graphs.
 
 This decoupling is the foundational design constraint of the system. The
 meta-build layer processes compiler profiles and emits a flat, pipe-delimited
-manifest. Enabling CBE to be optimized for a single objective: ingest this
+manifest. Enabling COB to be optimized for a single objective: ingest this
 manifest and drive the implied transformations with minimal scheduling overhead,
 while enforcing robust incremental rebuilding guarantees.
 
@@ -148,7 +148,7 @@ Three engineering invariants govern the implementation:
 \end{itemize}
 
 \callout{Architectural Invariant}
-{CBE operates strictly as a low-abstraction mechanical execution layer.
+{COB operates strictly as a low-abstraction mechanical execution layer.
 By delegating compiler profile resolution and custom macro expansion to the
 Catalyst meta-build generator, the executor operates over regular,
 pipe-delimited targets, bypassing the computational overhead of generic macro
@@ -169,16 +169,16 @@ either runs the parallel build or emits one of several auxiliary artifacts.
 \input{catalyst.tikz}}
 \end{center}
 
-As illustrated in the toolchain diagram, CBE operates within the broader \textbf{Catalyst Toolchain} ecosystem.
+As illustrated in the toolchain diagram, COB operates within the broader \textbf{Catalyst Toolchain} ecosystem.
 The input manifest \texttt{catalyst.build} is generated directly by the \textbf{Catalyst Build System}.
-On the first pass of a modified manifest, the CBE Parser parses the text representation and serializes it into the
+On the first pass of a modified manifest, the COB Parser parses the text representation and serializes it into the
 binary cache \texttt{.catalyst.bin} (re-emitting it for subsequent fast-path loads).
 Meanwhile, LPT task-scheduling metrics are fed from the \texttt{catalyst.estimates} file, which is maintained and
 updated by \textbf{catalyst ccache} to store historical compilation costs. During compiler dispatch, the actual compilation
 statistics are fed back into \textbf{catalyst ccache} to record and refine future task estimates. Additionally, because
-CBE operates on a simple, low-abstraction text manifest, alternative generators (\textbf{Other Meta Build Systems}
+COB operates on a simple, low-abstraction text manifest, alternative generators (\textbf{Other Meta Build Systems}
 like CMake or custom wrappers) can also emit the \texttt{catalyst.build} manifest
-to leverage CBE's high-performance parallel execution engine.
+to leverage COB's high-performance parallel execution engine.
 
 The translation units map cleanly onto these stages. \texttt{cli\_args.cpp}
 produces the configuration; \texttt{parser.cpp} and \texttt{binary.cpp} feed the
@@ -186,7 +186,7 @@ builder; \texttt{graph.cpp} owns the dependency representation;
 \texttt{executor.cpp} (with \texttt{executor\_stat\_cache.cpp},
 \texttt{process\_exec.cpp}, \texttt{json.cpp}, and \texttt{work\_estimate.cpp})
 implements scheduling and side effects. The header
-\texttt{cbe/utility.hpp} establishes the error-handling vocabulary for the whole
+\texttt{cob/utility.hpp} establishes the error-handling vocabulary for the whole
 project in a single line:
 
 \begin{lstlisting}
@@ -220,7 +220,7 @@ struct BuildStep {
 };
 \end{lstlisting}
 
-The distinction between the three input kinds is the heart of CBE's
+The distinction between the three input kinds is the heart of COB's
 dependency model:
 
 \begin{itemize}
@@ -378,13 +378,13 @@ Below is an example of a generated \texttt{.d} file:
 \begin{lstlisting}[language=,basicstyle=\ttfamily\fontsize{7}{7}\selectfont]
 obj/binary_7d9517a626d9ccfc.o: \
   /home/user/project/src/binary.cpp \
-  /home/user/project/include/cbe/binary.hpp \
-  /home/user/project/include/cbe/builder.hpp \
-  /home/user/project/include/cbe/graph.hpp \
-  /home/user/project/include/cbe/build_step.hpp \
-  /home/user/project/include/cbe/optional_vector.hpp \
-  /home/user/project/include/cbe/utility.hpp \
-  /home/user/project/include/cbe/file_handle.hpp
+  /home/user/project/include/cob/binary.hpp \
+  /home/user/project/include/cob/builder.hpp \
+  /home/user/project/include/cob/graph.hpp \
+  /home/user/project/include/cob/build_step.hpp \
+  /home/user/project/include/cob/optional_vector.hpp \
+  /home/user/project/include/cob/utility.hpp \
+  /home/user/project/include/cob/file_handle.hpp
 \end{lstlisting}
 
 \subsection{Binary Caches}
@@ -682,7 +682,7 @@ std::lock_guard write_lock(cache_mtx);   // miss: take the write lock
 
 Readers share the lock; only a miss escalates to exclusive access to perform the
 \lstinline|stat| and an ordered insert (the cache stays sorted so the
-\lstinline|lower_bound| binary search remains valid). It is the one place CBE
+\lstinline|lower_bound| binary search remains valid). It is the one place COB
 chooses a mutex over atomics, because the protected operation --- a binary
 search plus occasional insert --- does not map cleanly onto a lock-free
 structure.
@@ -696,7 +696,7 @@ same graph:
 \begin{itemize}
   \item \textbf{\texttt{compile\_commands.json}} (\lstinline|emit_compdb|): a
   compilation database for clangd/IDE tooling, built per compile step in
-  topological order. CBE ships its own minimal JSON value type
+  topological order. COB ships its own minimal JSON value type
   (\texttt{json.hpp}) backed by a \lstinline|std::flat_map| for objects, plus a
   hand-rolled serializer with proper string escaping (control characters become
   \lstinline|\uXXXX|).
@@ -736,7 +736,7 @@ dispatched first.
 
 \subsection{Compile-time feature flags}
 
-CBE is aggressively feature-gated through \lstinline|FF_cob__*| preprocessor
+COB is aggressively feature-gated through \lstinline|FF_cob__*| preprocessor
 macros: \lstinline|binary| (the cache), \lstinline|estimates| (LPT scheduling),
 \lstinline|logging| (capture + log file), \lstinline|profiling| (per-step
 timing), and \lstinline|heterogenous_core_affinity|. Disabled features compile
@@ -744,7 +744,7 @@ out entirely --- the \lstinline|ExecutorConfig| does not even carry an
 \lstinline|estimates_file| field unless estimates are enabled. This keeps the
 default binary lean and the hot paths free of dead branches.
 
-\subsection{CBE builds CBE}
+\subsection{COB builds COB}
 
 The \texttt{CATALYST.yaml} manifest shows the project is self-hosting: it is
 built by Catalyst itself. The configuration defines layered profiles ---
@@ -759,7 +759,7 @@ compiler launchers.
 % =====================================================================
 \section{Performance Evaluation and Empirical Benchmarks}
 
-To quantitatively evaluate the architectural efficiency of CBE, comparative benchmarks were executed against GNU Make (v4.3) and Ninja (v1.11.1) on a high-density mock repository (\texttt{heavy\_repo}) designed to simulate a massive C++ codebase. The workload consists of 1,000 translation units arranged in a balanced binary tree dependency topology to maximize scheduler breadth and depth.
+To quantitatively evaluate the architectural efficiency of COB, comparative benchmarks were executed against GNU Make (v4.3) and Ninja (v1.11.1) on a high-density mock repository (\texttt{heavy\_repo}) designed to simulate a massive C++ codebase. The workload consists of 1,000 translation units arranged in a balanced binary tree dependency topology to maximize scheduler breadth and depth.
 
 All benchmarks were captured using \texttt{hyperfine} with 2 warmup runs.
 The tests were performed on an Intel Core i9 14900KS (8 performance cores, 16 efficiency cores, 32 hardware threads)
@@ -767,7 +767,7 @@ running Linux Kernel 7.0.0-15 on Ubuntu 26.04.
 
 \subsection{Full Incremental Build Execution}
 
-The primary benchmark measures the makespan of a full incremental build loop, wherein a clean workspace is built from scratch. For this comparison, GNU Make and Ninja were executed with maximum parallel job parameters matching the hardware capabilities (\texttt{-j32}), while CBE utilized its default automated core-detection scheduler.
+The primary benchmark measures the makespan of a full incremental build loop, wherein a clean workspace is built from scratch. For this comparison, GNU Make and Ninja were executed with maximum parallel job parameters matching the hardware capabilities (\texttt{-j32}), while COB utilized its default automated core-detection scheduler.
 
 \begin{center}
 \renewcommand{\arraystretch}{1.2}
@@ -775,24 +775,24 @@ The primary benchmark measures the makespan of a full incremental build loop, wh
 \toprule
 \textbf{Orchestrator} & \textbf{Mean [s]} & \textbf{Min [s]} & \textbf{Max [s]} & \textbf{Relative Performance} \\
 \midrule
-\texttt{cbe}   & $1.625 \pm 0.021$ & $1.593$ & $1.652$ & $1.00$ \\
+\texttt{cob}   & $1.625 \pm 0.021$ & $1.593$ & $1.652$ & $1.00$ \\
 \texttt{ninja} & $1.801 \pm 0.010$ & $1.787$ & $1.817$ & $1.11 \pm 0.02$ \\
 \texttt{make}  & $1.846 \pm 0.016$ & $1.828$ & $1.875$ & $1.14 \pm 0.02$ \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-CBE achieves a statistically significant 11\% speedup over Ninja and a 14\% speedup over GNU Make.
+COB achieves a statistically significant 11\% speedup over Ninja and a 14\% speedup over GNU Make.
 This acceleration is driven by three architectural vectors:
 \begin{enumerate}
-    \item \textbf{Binary Serialization Warm Path}: CBE bypasses text-based parsing of the build manifest on subsequent runs, loading the pre-compiled \texttt{.catalyst.bin} via in-place \lstinline|reinterpret_cast| pointers on memory-mapped pages.
+    \item \textbf{Binary Serialization Warm Path}: COB bypasses text-based parsing of the build manifest on subsequent runs, loading the pre-compiled \texttt{.catalyst.bin} via in-place \lstinline|reinterpret_cast| pointers on memory-mapped pages.
     \item \textbf{High-Efficiency Lock-Free Scheduling}: Coordination between worker threads utilizes Dmitry Vyukov MPMC queues and atomic in-degree decrements. In contrast, Ninja relies on lock-heavy scheduling queues and serial state checks, which induce cacheline bouncing and lock contention at high thread counts (32 threads).
     \item \textbf{Longest Processing Time (LPT) Ordering}: Pre-sorting root tasks based on Exponential Moving Average (EMA) historical execution estimates ensures that compiler bottlenecks are scheduled early, minimizing the tail execution makespan.
 \end{enumerate}
 
 \subsection{Workspace Cleanup and CompDB Generation}
 
-To ensure complete transparency and prevent overstating CBE's performance profile, secondary tasks were benchmarked
+To ensure complete transparency and prevent overstating COB's performance profile, secondary tasks were benchmarked
 to identify overhead profiles. These tasks do not run compiler processes and are governed entirely by metadata
 read/write performance.
 
@@ -804,30 +804,30 @@ read/write performance.
 \midrule
 \textbf{Clean Subcommand} & & & & \\
 \quad\texttt{ninja -t clean} & $12.3 \pm 2.4$ & $9.7$ & $15.7$ & $1.00$ \\
-\quad\texttt{cbe -t clean}   & $23.2 \pm 2.9$ & $20.3$ & $30.1$ & $1.89 \pm 0.44$ \\
+\quad\texttt{cob -t clean}   & $23.2 \pm 2.9$ & $20.3$ & $30.1$ & $1.89 \pm 0.44$ \\
 \quad\texttt{make clean}      & $367.8 \pm 10.2$ & $353.4$ & $381.8$ & $29.94 \pm 5.88$ \\
 \midrule
 \textbf{CompDB Generation} & & & & \\
 \quad\texttt{ninja -t compdb} & $4.4 \pm 0.7$ & $2.8$ & $5.8$ & $1.00$ \\
-\quad\texttt{cbe -t compdb}   & $12.9 \pm 1.8$ & $9.6$ & $17.0$ & $2.92 \pm 0.63$ \\
+\quad\texttt{cob -t compdb}   & $12.9 \pm 1.8$ & $9.6$ & $17.0$ & $2.92 \pm 0.63$ \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-On clean-only and JSON compilation database (CompDB) emission, Ninja outperforms CBE. This performance gap is explained
+On clean-only and JSON compilation database (CompDB) emission, Ninja outperforms COB. This performance gap is explained
 by Ninja's internal metadata organization:
 \begin{itemize}
-    \item \textbf{Internal Database Caching}: Ninja maintains a highly optimized, compact, append-only binary log (\texttt{.ninja\_log} and \texttt{.ninja\_deps}) directly inside its core execution loop, bypassing high-level standard library abstractions like \lstinline|std::filesystem| or \lstinline|std::flat_map| used by CBE.
+    \item \textbf{Internal Database Caching}: Ninja maintains a highly optimized, compact, append-only binary log (\texttt{.ninja\_log} and \texttt{.ninja\_deps}) directly inside its core execution loop, bypassing high-level standard library abstractions like \lstinline|std::filesystem| or \lstinline|std::flat_map| used by COB.
     \item \textbf{Format Simplicity}: The Catalyst manifest requires parsing comma-separated lists and resolving multiple definition sets, whereas Ninja reads a pre-calculated, flat dependency structure designed for rapid traversal.
 \end{itemize}
-CBE, however, remains nearly an order of magnitude faster than GNU Make during workspace cleanup, because GMake must recursively traverse directories and evaluate rules sequentially.
+COB, however, remains nearly an order of magnitude faster than GNU Make during workspace cleanup, because GMake must recursively traverse directories and evaluate rules sequentially.
 
 \callout{DOT emission}
 {
 We ommited to test DOT emission performance because it is not frequently used by
 typical development workflows and is primarily a debugging aid and is never used
 by the catalyst build system.
-Furthermore, CBE's DOT emitter emits the relationship between \emph{all} nodes
+Furthermore, COB's DOT emitter emits the relationship between \emph{all} nodes
 in the graph rather than just targest like ninja uses.
 }
 
@@ -876,7 +876,7 @@ Lean default binary, no dead branches \\
 
 \vspace{6pt}
 \callout{Architectural Synthesis}
-{CBE achieves its execution velocity by operating over a borrowed, memory-mapped dependency DAG parsed exactly once, traversing this DAG with a lock-free, in-degree-driven, longest-job-first thread scheduler, isolating shared-mutex contention to a memoized stat cache, and statically compiling away unused configurations.}
+{COB achieves its execution velocity by operating over a borrowed, memory-mapped dependency DAG parsed exactly once, traversing this DAG with a lock-free, in-degree-driven, longest-job-first thread scheduler, isolating shared-mutex contention to a memoized stat cache, and statically compiling away unused configurations.}
 \end{comment}
 
 \end{document}
