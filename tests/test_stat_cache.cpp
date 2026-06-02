@@ -1,5 +1,5 @@
 #include "cob/executor.hpp"
-#include "tests/test_suite.hpp"
+#include "cob-tests/test_suite.hpp"
 
 #include <cassert>
 #include <filesystem>

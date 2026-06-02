@@ -1,5 +1,5 @@
-#include "tests/test_suite.hpp"
-#include "tests/testing_utils.hpp"
+#include "cob-tests/test_suite.hpp"
+#include "cob-tests/testing_utils.hpp"
 
 #include "cob/binary.hpp"
 #include "cob/builder.hpp"
