@@ -158,7 +158,7 @@ parsing and variable evaluation loops.}
 \section{System Architecture}
 
 The execution path is a short, linear pipeline. The CLI parses arguments into an
-\lstinline|ExecutorConfig|; the parser populates a \lstinline|CBEBuilder|
+\lstinline|ExecutorConfig|; the parser populates a \lstinline|COBBuilder|
 (either from the binary cache or the text manifest); the builder hands a
 finished \lstinline|BuildGraph| to the \lstinline|Executor|, which (optionally
 guided by historical execution cost loaded from \texttt{catalyst.estimates})
@@ -248,7 +248,7 @@ using Definitions = std::flat_map<std::string_view, std::string_view>;
 
 Because paths and flags are all \lstinline|string_view|s into mapped files, the
 graph must keep those files alive for as long as any view into them is reachable.
-This is handled by a type-erased resource list. \lstinline|CBEBuilder| and
+This is handled by a type-erased resource list. \lstinline|COBBuilder| and
 \lstinline|BuildGraph| hold \lstinline|std::vector<std::shared_ptr<void>>|, and
 every mapped file is registered via \lstinline|add_resource|:
 

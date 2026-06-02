@@ -1,14 +1,14 @@
 #pragma once
 
-#include "cbe/build_step.hpp"
-#include "cbe/utility.hpp"
+#include "cob/build_step.hpp"
+#include "cob/utility.hpp"
 
 #include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
-#include "cbe/flat_map.hpp"
+#include "cob/flat_map.hpp"
 #include <vector>
 
 namespace catalyst {
@@ -83,7 +83,7 @@ public:
         index_ = std::move(data.index);
     }
 
-    friend Result<void> parse(class CBEBuilder &, const std::filesystem::path &);
+    friend Result<void> parse(class COBBuilder &, const std::filesystem::path &);
 
 
 private:

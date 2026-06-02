@@ -1,9 +1,9 @@
-#include "cbe/parser.hpp"
+#include "cob/parser.hpp"
 
-#include "cbe/binary.hpp"
-#include "cbe/builder.hpp"
-#include "cbe/file_handle.hpp"
-#include "cbe/utility.hpp"
+#include "cob/binary.hpp"
+#include "cob/builder.hpp"
+#include "cob/file_handle.hpp"
+#include "cob/utility.hpp"
 
 #include <memory>
 #include <string_view>
@@ -12,7 +12,7 @@ namespace catalyst {
 
 namespace {
 
-Result<void> parse_def(const std::string_view line, CBEBuilder &builder) {
+Result<void> parse_def(const std::string_view line, COBBuilder &builder) {
     size_t first_pipe = line.find('|');
     if (first_pipe == std::string_view::npos) {
         return std::unexpected(std::format("Malformed def line (missing first pipe): {}", line));
@@ -30,7 +30,7 @@ Result<void> parse_def(const std::string_view line, CBEBuilder &builder) {
     return {};
 }
 
-Result<void> parse_step(const std::string_view line, CBEBuilder &builder) {
+Result<void> parse_step(const std::string_view line, COBBuilder &builder) {
     size_t first_pipe = line.find('|');
     if (first_pipe == std::string_view::npos) {
         return std::unexpected(std::format("Malformed step line (missing first pipe): {}", line));
@@ -54,7 +54,7 @@ Result<void> parse_step(const std::string_view line, CBEBuilder &builder) {
 
 } // namespace
 
-Result<void> parse(CBEBuilder &builder, const std::filesystem::path &path) {
+Result<void> parse(COBBuilder &builder, const std::filesystem::path &path) {
 #if FF_cbe__binary == 1
     if (std::filesystem::exists(".catalyst.bin") &&
         std::filesystem::last_write_time(".catalyst.bin") > std::filesystem::last_write_time(path)) {

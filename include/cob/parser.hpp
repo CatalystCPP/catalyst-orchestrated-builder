@@ -1,7 +1,7 @@
 #pragma once
 
-#include "cbe/builder.hpp"
-#include "cbe/utility.hpp"
+#include "cob/builder.hpp"
+#include "cob/utility.hpp"
 
 #include <filesystem>
 
@@ -17,6 +17,6 @@ namespace catalyst {
  * @param path The path to the manifest file (typically "catalyst.build").
  * @return Success or error.
  */
-Result<void> parse(CBEBuilder &builder, const std::filesystem::path &path);
+Result<void> parse(COBBuilder &builder, const std::filesystem::path &path);
 
 } // namespace catalyst

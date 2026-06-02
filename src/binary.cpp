@@ -1,9 +1,9 @@
-#include "cbe/binary.hpp"
+#include "cob/binary.hpp"
 
-#include "cbe/builder.hpp"
-#include "cbe/file_handle.hpp"
-#include "cbe/graph.hpp"
-#include "cbe/optional_vector.hpp"
+#include "cob/builder.hpp"
+#include "cob/file_handle.hpp"
+#include "cob/graph.hpp"
+#include "cob/optional_vector.hpp"
 
 #include <array>
 #include <cstdint>
@@ -12,7 +12,7 @@
 #include <fstream>
 #include <memory>
 #include <string_view>
-#include "cbe/flat_map.hpp"
+#include "cob/flat_map.hpp"
 #include <vector>
 
 // NOLINTBEGIN(cppcoreguidelines-pro-type-reinterpret-cast)
@@ -60,7 +60,7 @@ struct BinDefinition {
 
 } // namespace
 
-Result<void> parse_bin(CBEBuilder &builder) {
+Result<void> parse_bin(COBBuilder &builder) {
     std::shared_ptr<MappedFile> file;
     try {
         file = std::make_shared<MappedFile>(".catalyst.bin");
@@ -194,7 +194,7 @@ Result<void> parse_bin(CBEBuilder &builder) {
     return {};
 }
 
-Result<void> emit_bin(CBEBuilder &builder) {
+Result<void> emit_bin(COBBuilder &builder) {
     std::ofstream out(".catalyst.bin.tmp", std::ios::binary);
     if (!out) {
         return std::unexpected("Failed to open .catalyst.bin.tmp for writing");

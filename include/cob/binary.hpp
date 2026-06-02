@@ -1,7 +1,7 @@
 #pragma once
 
-#include "cbe/builder.hpp"
-#include "cbe/utility.hpp"
+#include "cob/builder.hpp"
+#include "cob/utility.hpp"
 
 namespace catalyst {
 
@@ -18,7 +18,7 @@ struct StringRef {
  * @param builder The builder to populate.
  * @return Success or error.
  */
-Result<void> parse_bin(CBEBuilder &builder);
+Result<void> parse_bin(COBBuilder &builder);
 
 /**
  * @brief Serializes the current build graph to the binary cache format.
@@ -26,6 +26,6 @@ Result<void> parse_bin(CBEBuilder &builder);
  * @param builder The builder containing the graph to serialize.
  * @return Success or error.
  */
-Result<void> emit_bin(CBEBuilder &builder);
+Result<void> emit_bin(COBBuilder &builder);
 
 } // namespace catalyst

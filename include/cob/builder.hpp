@@ -1,6 +1,6 @@
 #pragma once
 
-#include "cbe/graph.hpp"
+#include "cob/graph.hpp"
 
 #include <filesystem>
 #include <memory>
@@ -18,7 +18,7 @@ namespace catalyst {
  * This class acts as a facade for populating the `BuildGraph` and `Definitions`.
  * It is used by parsers to construct the build representation.
  */
-class CBEBuilder {
+class COBBuilder {
 public:
     /**
      * @brief Adds a build step to the underlying graph.
@@ -64,7 +64,7 @@ public:
         graph_.load_serialized_data(std::move(data));
     }
 
-    friend Result<void> parse(CBEBuilder &, const std::filesystem::path &);
+    friend Result<void> parse(COBBuilder &, const std::filesystem::path &);
     friend class Executor;
 
 private:

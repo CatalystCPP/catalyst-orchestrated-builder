@@ -1,4 +1,4 @@
-#include "cbe/executor.hpp"
+#include "cob/executor.hpp"
 #include "tests/test_suite.hpp"
 
 #include <cassert>

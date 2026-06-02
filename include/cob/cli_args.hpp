@@ -1,6 +1,6 @@
 #pragma once
 
-#include "cbe/executor.hpp"
+#include "cob/executor.hpp"
 
 namespace catalyst {
 struct CliArgs {

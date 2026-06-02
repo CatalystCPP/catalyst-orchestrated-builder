@@ -1,14 +1,14 @@
-#include "cbe/executor.hpp"
+#include "cob/executor.hpp"
 
-#include "cbe/utils.hpp"
-#include "cbe/binary.hpp"
-#include "cbe/build_step.hpp"
-#include "cbe/builder.hpp"
-#include "cbe/json.hpp"
-#include "cbe/mpmc_queue.hpp"
-#include "cbe/mpsc_queue.hpp"
-#include "cbe/process_exec.hpp"
-#include "cbe/utility.hpp"
+#include "cob/utils.hpp"
+#include "cob/binary.hpp"
+#include "cob/build_step.hpp"
+#include "cob/builder.hpp"
+#include "cob/json.hpp"
+#include "cob/mpmc_queue.hpp"
+#include "cob/mpsc_queue.hpp"
+#include "cob/process_exec.hpp"
+#include "cob/utility.hpp"
 
 #include <atomic>
 #include <cassert>
@@ -203,7 +203,7 @@ bool isNewer(const std::filesystem::path &new_file, const std::filesystem::path 
     return new_time > old_time;
 }
 
-Executor::Executor(CBEBuilder &&builder, const ExecutorConfig &config) : builder(std::move(builder)), config(config) {
+Executor::Executor(COBBuilder &&builder, const ExecutorConfig &config) : builder(std::move(builder)), config(config) {
 #if FF_cbe__estimates
     estimator = std::make_unique<WorkEstimate>(config.estimates_file);
 #endif

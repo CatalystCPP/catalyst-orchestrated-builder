@@ -1,9 +1,9 @@
 #include "tests/test_suite.hpp"
 #include "tests/testing_utils.hpp"
 
-#include "cbe/binary.hpp"
-#include "cbe/builder.hpp"
-#include "cbe/executor.hpp"
+#include "cob/binary.hpp"
+#include "cob/builder.hpp"
+#include "cob/executor.hpp"
 
 #include <cassert>
 #include <filesystem>
@@ -28,7 +28,7 @@ bool rebuild_command_change_test() {
 
     // 1. Initial Build with -DTEST1
     {
-        CBEBuilder builder;
+        COBBuilder builder;
         builder.add_definition("cc", "clang");
         builder.add_definition("cflags", "-DTEST1");
 
@@ -53,7 +53,7 @@ bool rebuild_command_change_test() {
 
     // 2. Second Build with SAME flags (-DTEST1). Should skip!
     {
-        CBEBuilder builder;
+        COBBuilder builder;
         std::cout << "[Run 2] parsing bin..." << std::endl;
         auto parse_res = parse_bin(builder);
         if (!parse_res) {
@@ -77,7 +77,7 @@ bool rebuild_command_change_test() {
 
     // 3. Third Build with DIFFERENT flags (-DTEST2). Should rebuild!
     {
-        CBEBuilder builder;
+        COBBuilder builder;
         std::cout << "[Run 3] parsing bin..." << std::endl;
         auto parse_res = parse_bin(builder);
         if (!parse_res) {
@@ -122,7 +122,7 @@ bool integration_test() {
 
     create_dummy_file("dummy.c");
 
-    CBEBuilder builder;
+    COBBuilder builder;
     builder.add_definition("cc", "clang"); // Mock cc with echo
     builder.add_definition("cflags", "-DTEST");
 

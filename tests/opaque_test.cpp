@@ -1,6 +1,6 @@
-#include "cbe/builder.hpp"
-#include "cbe/executor.hpp"
-#include "cbe/parser.hpp"
+#include "cob/builder.hpp"
+#include "cob/executor.hpp"
+#include "cob/parser.hpp"
 
 #include <cassert>
 #include <filesystem>
@@ -32,7 +32,7 @@ bool opaque_deps_test() {
     // Actually, the executor uses process_exec which just runs the command.
     // But the executor constructs the command based on the tool name.
 
-    CBEBuilder builder;
+    COBBuilder builder;
     builder.add_definition("cc", ""); // Mock cc with cp for testing
     builder.add_definition("cflags", "");
 
@@ -64,7 +64,7 @@ bool opaque_deps_test() {
     create_file("opaque.txt", "changed data");
 
     // Second run - should rebuild
-    CBEBuilder builder2;
+    COBBuilder builder2;
     builder2.add_definition("cc", "cp");
     builder2.add_definition("cflags", "");
     BuildStep step2;

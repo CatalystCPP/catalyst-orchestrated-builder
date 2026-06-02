@@ -1,8 +1,8 @@
-#include "cbe/graph.hpp"
+#include "cob/graph.hpp"
 
-#include "cbe/build_step.hpp"
-#include "cbe/file_handle.hpp"
-#include "cbe/utility.hpp"
+#include "cob/build_step.hpp"
+#include "cob/file_handle.hpp"
+#include "cob/utility.hpp"
 
 #include <algorithm>
 #include <cstdint>

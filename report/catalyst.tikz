@@ -36,7 +36,7 @@
 
 % ==================== 2. CATALYST BUILD EXECUTOR (CBE) ====================
 \node[box] (cbe_parse) at (4.3, 0.0) {Parser\\\footnotesize text / binary};
-\node[box] (cbe_builder) at (7.9, 0.0) {CBEBuilder\\\footnotesize facade};
+\node[box] (cbe_builder) at (7.9, 0.0) {COBBuilder\\\footnotesize facade};
 \node[box] (cbe_graph) at (11.5, 0.0) {BuildGraph\\\footnotesize nodes + edges};
 \node[box] (cbe_exec) at (15.1, 0.0) {Executor\\\footnotesize scheduler};
 

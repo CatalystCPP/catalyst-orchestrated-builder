@@ -1,7 +1,7 @@
-#include "cbe/builder.hpp"
-#include "cbe/cli_args.hpp"
-#include "cbe/executor.hpp"
-#include "cbe/parser.hpp"
+#include "cob/builder.hpp"
+#include "cob/cli_args.hpp"
+#include "cob/executor.hpp"
+#include "cob/parser.hpp"
 
 #include <filesystem>
 #include <format>
@@ -32,7 +32,7 @@ int main(const int argc, const char *const *argv) {
         }
     }
 
-    catalyst::CBEBuilder builder;
+    catalyst::COBBuilder builder;
 
     if (!std::filesystem::exists(config.build_file)) {
         std::println(std::cerr, "Build File: {} does not exist.", config.build_file);

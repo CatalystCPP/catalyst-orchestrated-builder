@@ -4,7 +4,7 @@ The `WorkEstimate` feature allows the build executor to prioritize tasks based o
 
 ## Class: `catalyst::WorkEstimate`
 
-Defined in `include/cbe/work_estimate.hpp`.
+Defined in `include/cob/work_estimate.hpp`.
 
 ### Responsibilities
 - Loads estimates from a specified file.
@@ -39,7 +39,7 @@ src/heavy_compilation.cpp|5000
 ### Usage
 
 ```cpp
-#include "cbe/work_estimate.hpp"
+#include "cob/work_estimate.hpp"
 
 // ...
 

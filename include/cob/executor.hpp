@@ -1,10 +1,10 @@
 #pragma once
 
-#include "cbe/builder.hpp"
-#include "cbe/graph.hpp"
-#include "cbe/utility.hpp"
+#include "cob/builder.hpp"
+#include "cob/graph.hpp"
+#include "cob/utility.hpp"
 #if FF_cbe__estimates
-#include "cbe/work_estimate.hpp"
+#include "cob/work_estimate.hpp"
 #endif
 
 #include <shared_mutex>
@@ -103,7 +103,7 @@ struct ExecutorConfig {
  */
 class Executor {
 public:
-    Executor(CBEBuilder &&builder, const ExecutorConfig &config);
+    Executor(COBBuilder &&builder, const ExecutorConfig &config);
 
     /**
      * @brief Executes the build.
@@ -150,7 +150,7 @@ private:
     void worker_loop(ExecuteContext& ctx, StatCache& stat_cache, bool is_tty, size_t thread_count);
     void push_ready(size_t idx, ExecuteContext& ctx);
 
-    CBEBuilder builder;
+    COBBuilder builder;
     ExecutorConfig config;
 #if FF_cbe__estimates
     std::unique_ptr<WorkEstimate> estimator;
