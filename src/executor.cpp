@@ -749,6 +749,9 @@ int Executor::process_step(size_t node_idx, ExecuteContext &ctx, StatCache &stat
                 }
                 // build succeeded, update the command hash for future up-to-date checks
                 step.command_hash = step_hash;
+                // the output was just rewritten; drop any stale cached modtime so downstream
+                // steps consuming this artifact re-stat it and see the fresh time
+                stat_cache.invalidate(step.output);
             } else {
                 std::string err_msg = std::format("Failed to execute: {}\n", res.error());
                 while (!ctx.progress_queue.enqueue(
