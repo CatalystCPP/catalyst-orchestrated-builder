@@ -19,26 +19,26 @@
   ar/.style={-{Stealth[length=2.2mm]},line width=0.7pt,accentdark}
 ]
 
-\node[greenio] (cbe_file) at (0.0, 1.0) {\texttt{catalyst.build}\\\footnotesize(COB text manifest)};
-\node[io] (cbe_bin) at (0.0, -1.0) {\texttt{.catalyst.bin}\\\footnotesize(COB binary cache)};
+\node[greenio] (cob_file) at (0.0, 1.0) {\texttt{catalyst.build}\\\footnotesize(COB text manifest)};
+\node[io] (cob_bin) at (0.0, -1.0) {\texttt{.catalyst.bin}\\\footnotesize(COB binary cache)};
 
-\node[box] (cbe_parse) at (4.3, 0.0) {Parser\\\footnotesize text / binary};
-\node[box] (cbe_builder) at (7.9, 0.0) {COBBuilder\\\footnotesize facade};
-\node[box] (cbe_graph) at (11.5, 0.0) {BuildGraph\\\footnotesize nodes + edges};
-\node[box] (cbe_exec) at (15.1, 0.0) {Executor\\\footnotesize scheduler};
+\node[box] (cob_parse) at (4.3, 0.0) {Parser\\\footnotesize text / binary};
+\node[box] (cob_builder) at (7.9, 0.0) {COBBuilder\\\footnotesize facade};
+\node[box] (cob_builder) at (11.5, 0.0) {BuildGraph\\\footnotesize nodes + edges};
+\node[box] (cob_exec) at (15.1, 0.0) {Executor\\\footnotesize scheduler};
 
-\draw[ar] (cbe_file) -- (cbe_parse);
-\draw[ar] (cbe_bin) -- (cbe_parse);
-\draw[ar, dashed, bend left=20] (cbe_parse) to node[above, font=\tiny] {re-emits} (cbe_bin);
-\draw[ar] (cbe_parse) -- (cbe_builder);
-\draw[ar] (cbe_builder) -- (cbe_graph);
-\draw[ar] (cbe_graph) -- (cbe_exec);
+\draw[ar] (cob_file) -- (cob_parse);
+\draw[ar] (cob_bin) -- (cob_parse);
+\draw[ar, dashed, bend left=20] (cob_parse) to node[above, font=\tiny] {re-emits} (cob_bin);
+\draw[ar] (cob_parse) -- (cob_builder);
+\draw[ar] (cob_builder) -- (cob_builder);
+\draw[ar] (cob_builder) -- (cob_exec);
 
 \begin{scope}[on background layer]
   \node[draw=slate, line width=1.0pt, rounded corners, fill=codebg,
-        fit=(cbe_parse)(cbe_exec), inner sep=10pt] (cbe_group) {};
+        fit=(cob_parse)(cob_exec), inner sep=10pt] (cob_group) {};
 \end{scope}
-\node[slate, font=\footnotesize\bfseries, above=4pt of cbe_group] (cbe_title) {Catalyst Orchestrated Builder (COB)};
+\node[slate, font=\footnotesize\bfseries, above=4pt of cob_group] (cob_title) {Catalyst Orchestrated Builder (COB)};
 
 % ==================== 3. OUTPUTS & BACKENDS ====================
 \node[io] (out1) at (19.9, 4.0) {Compiler Dispatch\\\footnotesize(compiler processes)};
@@ -46,9 +46,9 @@
 \node[io] (out3) at (19.9, 0.0) {DOT Graph\\\footnotesize(dependency visualization)};
 \node[io] (out4) at (19.9, -2.0) {Clean\\\footnotesize(intermediate removal)};
 
-\draw[ar] (cbe_exec) -- (out1);
-\draw[ar] (cbe_exec) -- (out2);
-\draw[ar] (cbe_exec) -- (out3);
-\draw[ar] (cbe_exec) -- (out4);
+\draw[ar] (cob_exec) -- (out1);
+\draw[ar] (cob_exec) -- (out2);
+\draw[ar] (cob_exec) -- (out3);
+\draw[ar] (cob_exec) -- (out4);
 
 \end{tikzpicture}
