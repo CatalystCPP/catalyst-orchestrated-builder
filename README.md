@@ -9,4 +9,4 @@ COB is a high-speed, low-level build orchestrator designed as a machine-
 generated target for higher-level meta-build systems, focusing on performance
 and dependency tracking.
 
-Check out the [docs](https://catalystcpp.github.io/cob/).
+Check out the [docs](https://catalystcpp.github.io/catalyst-orchestrated-builder/).
