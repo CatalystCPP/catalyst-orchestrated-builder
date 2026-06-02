@@ -42,11 +42,11 @@ def generate_sources():
     for i in range(NUM_SOURCES):
         name = f"source_{i}.cpp"
         filename = os.path.join(SRC_DIR, name)
-        
+
         # Vary the number of included headers for different lengths
         num_deps = random.randint(5, 150)
         source_info.append((name, num_deps))
-        
+
         with open(filename, "w") as f:
             f.write(f"// Source {i}\n")
 
@@ -179,6 +179,12 @@ def generate_makefile(source_files):
         deps = [o + ".d" for o in obj_files]
         f.write("-include " + " ".join(deps) + "\n")
 
+        f.write("clean:\n")
+        obj_files_clean_cmd = "\trm "
+        for obj in obj_files:
+            obj_files_clean_cmd += (obj + " ")
+        f.write(obj_files_clean_cmd)
+
 
 def generate_estimates(source_info):
     estimates_path = os.path.join(ROOT_DIR, "catalyst.estimates")
@@ -187,14 +193,14 @@ def generate_estimates(source_info):
         for src, num_deps in source_info:
             obj_name = f"build/{src}.o"
             entries.append((obj_name, num_deps))
-        
+
         # Add main and link step estimates
         entries.append(("build/main.cpp.o", 80))
         entries.append(("build/heavy_app", 300))
-        
+
         # Sort lexicographically by path
         entries.sort()
-        
+
         for path, est in entries:
             f.write(f"{path}|{est}\n")
 
