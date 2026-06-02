@@ -19,11 +19,11 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.1">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
     
     
       
-        <title>Build File Schema - Catalyst Build Executor</title>
+        <title>Build File Schema - Catalyst Orchestrated Builder</title>
       
     
     
@@ -80,7 +80,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../.." title="Catalyst Build Executor" class="md-header__button md-logo" aria-label="Catalyst Build Executor" data-md-component="logo">
+    <a href="../.." title="Catalyst Orchestrated Builder" class="md-header__button md-logo" aria-label="Catalyst Orchestrated Builder" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -94,7 +94,7 @@
       <div class="md-header__ellipsis">
         <div class="md-header__topic">
           <span class="md-ellipsis">
-            Catalyst Build Executor
+            Catalyst Orchestrated Builder
           </span>
         </div>
         <div class="md-header__topic" data-md-component="header-topic">
@@ -178,13 +178,13 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../.." title="Catalyst Build Executor" class="md-nav__button md-logo" aria-label="Catalyst Build Executor" data-md-component="logo">
+    <a href="../.." title="Catalyst Orchestrated Builder" class="md-nav__button md-logo" aria-label="Catalyst Orchestrated Builder" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
 
     </a>
-    Catalyst Build Executor
+    Catalyst Orchestrated Builder
   </label>
   
   <ul class="md-nav__list" data-md-scrollfix>
@@ -203,7 +203,7 @@
   <span class="md-ellipsis">
     
   
-    Catalyst Build Executor (CBE)
+    Catalyst Orchestrated Builder (COB)
   
 
     
@@ -783,7 +783,7 @@ parsing.</p>
 <p>Format: <code>DEF|&lt;var&gt;|&lt;val&gt;</code></p>
 <ul>
 <li><code>DEF</code>: The introducer for a definition line. Must be capitalized.</li>
-<li><code>&lt;var&gt;</code>: The variable name (e.g., <code>cc</code>, <code>cflags</code>).</li>
+<li><code>&lt;var&gt;</code>: The variable name. While keys in <code>DEF</code> can be anything, only specific ones are respected by the build system.</li>
 <li><code>&lt;val&gt;</code>: The value assigned to the variable. Empty values use <code>DEF|&lt;var&gt;|</code>.</li>
 </ul>
 <h4 id="supported-variables">Supported Variables</h4>
@@ -805,6 +805,16 @@ parsing.</p>
 <td><code>cxx</code></td>
 <td>The C++ compiler executable.</td>
 <td><code>/usr/bin/clang++</code></td>
+</tr>
+<tr>
+<td><code>linker</code></td>
+<td>The linker executable (defaults to <code>cxx</code> if empty/omitted).</td>
+<td><code>/usr/bin/clang++</code> or <code>/usr/bin/ld</code></td>
+</tr>
+<tr>
+<td><code>archiver</code></td>
+<td>The static archiver executable (defaults to <code>ar</code>, <code>libtool</code>, or <code>lib</code> based on OS if empty/omitted).</td>
+<td><code>/usr/bin/ar</code></td>
 </tr>
 <tr>
 <td><code>cflags</code></td>
@@ -837,7 +847,7 @@ parsing.</p>
 <li><code>&lt;output_file&gt;</code>: The path to the generated file.</li>
 </ul>
 <h4 id="toolchain-mapping">Toolchain Mapping</h4>
-<p>CBE maps specific step types to command templates. It strictly enforces certain
+<p>COB maps specific step types to command templates. It strictly enforces certain
 behaviors (like dependency generation) by injecting flags.</p>
 <table>
 <thead>
@@ -890,8 +900,8 @@ content) that affect the build output but aren't direct inputs to the command
 line.</p>
 <p>Important Notes(See <a href="../../implementation/overview/">Implementation Details</a> for more info):</p>
 <ol>
-<li>Dependency Tracking (<code>.d</code>): For <code>cc</code> and <code>cxx</code>, <strong>do not</strong> manually add <code>-MMD</code> or <code>-MF</code> to your <code>$cflags</code>/<code>$cxxflags</code>. CBE automatically injects these to manage incremental builds correctly.</li>
-<li>Response Files (<code>.rsp</code>): For <code>ld</code> steps with many inputs (currently &gt;50), CBE will automatically generate a response file and pass it via <code>@&lt;out&gt;.rsp</code> to avoid command-line length limits.</li>
+<li>Dependency Tracking (<code>.d</code>): For <code>cc</code> and <code>cxx</code>, <strong>do not</strong> manually add <code>-MMD</code> or <code>-MF</code> to your <code>$cflags</code>/<code>$cxxflags</code>. COB automatically injects these to manage incremental builds correctly.</li>
+<li>Response Files (<code>.rsp</code>): For <code>ld</code> steps with many inputs (currently &gt;50), COB will automatically generate a response file and pass it via <code>@&lt;out&gt;.rsp</code> to avoid command-line length limits.</li>
 </ol>
 <h2 id="example-manifest">Example Manifest</h2>
 <pre><code class="language-text">DEF|cc|clang

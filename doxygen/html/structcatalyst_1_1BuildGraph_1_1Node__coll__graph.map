@@ -1,9 +1,0 @@
-<map id="catalyst::BuildGraph::Node" name="catalyst::BuildGraph::Node">
-<area shape="rect" id="Node000001" title="Represents a node in the dependency graph (typically a file)." alt="" coords="95,183,250,223"/>
-<area shape="rect" id="Node000002" title=" " alt="" coords="26,95,151,120"/>
-<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="110,128,158,181,154,184,106,132"/>
-<area shape="rect" id="Node000003" title=" " alt="" coords="5,5,172,45"/>
-<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="91,59,91,94,86,94,86,59"/>
-<area shape="rect" id="Node000004" title=" " alt="" coords="176,95,335,120"/>
-<area shape="poly" id="edge3_Node000001_Node000004" title=" " alt="" coords="238,132,191,184,187,181,234,129"/>
-</map>
