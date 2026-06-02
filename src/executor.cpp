@@ -141,57 +141,6 @@ void dumpJSON(const catalyst::JSON &j, std::ofstream &os) {
     os.write(buf.data(), static_cast<long>(buf.size()));
 }
 
-void writeCompdb(const catalyst::JSON &compdb, std::ofstream &out) {
-    dumpJSON(compdb, out);
-}
-
-catalyst::JSON Executor::buildCompdb(const BuildGraph &build_graph) const {
-    using JSON = catalyst::JSON;
-    JSON compdb = JSON::array();
-    auto cwd = std::filesystem::current_path().string();
-
-    const auto cc_vec = builder.getDefinitionOf<std::vector<std::string>>("cc");
-    const auto cxx_vec = builder.getDefinitionOf<std::vector<std::string>>("cxx");
-    const auto linker_vec = builder.getLinkerVec(cxx_vec);
-    const auto archiver_vec = builder.getArchiverVec();
-    const auto cflags_vec = builder.getDefinitionOf<std::vector<std::string>>("cflags");
-    const auto cxxflags_vec = builder.getDefinitionOf<std::vector<std::string>>("cxxflags");
-    const auto ldflags_vec = builder.getDefinitionOf<std::vector<std::string>>("ldflags");
-    const auto ldlibs_vec = builder.getDefinitionOf<std::vector<std::string>>("ldlibs");
-
-    ToolchainFlags tf = {.cc = cc_vec,
-                         .cxx = cxx_vec,
-                         .linker = linker_vec,
-                         .archiver = archiver_vec,
-                         .cflags = cflags_vec,
-                         .cxxflags = cxxflags_vec,
-                         .ldflags = ldflags_vec,
-                         .ldlibs = ldlibs_vec};
-    for (const auto &node : build_graph.nodes()) {
-        if (!node.step_id.has_value())
-            continue;
-        const auto &step = build_graph.steps()[*node.step_id];
-
-        // Only emit for compilation steps
-        if (step.tool != "cc" && step.tool != "cxx")
-            continue;
-
-        const std::vector<std::string_view> &inputs = step.parsed_inputs;
-
-        std::vector<std::string> args = build_command_args(step, false, tf);
-
-        JSON entry;
-        entry["directory"] = cwd;
-        entry["arguments"] = args;
-        if (!inputs.empty()) {
-            entry["file"] = inputs[0];
-        }
-        entry["output"] = step.output;
-        compdb.push_back(entry);
-    }
-    return compdb;
-}
-
 bool isNewer(const std::filesystem::path &new_file, const std::filesystem::path &old_file) {
     std::error_code ec;
     auto new_time = std::filesystem::last_write_time(new_file, ec);
@@ -251,7 +200,7 @@ bool inline Executor::needs_rebuild(const BuildStep &step,
                                     StatCache &stat_cache,
                                     const ToolchainFlags &flags,
                                     uint64_t *out_hash) const {
-    auto args = build_command_args(step, false, flags);
+    auto args = build_command_args(step, true, flags);
     uint64_t current_hash = hash_command(args);
 
     if (out_hash) {
@@ -346,10 +295,73 @@ Result<void> Executor::emit_graph() {
 
 Result<void> Executor::emit_compdb() {
     catalyst::BuildGraph build_graph = builder.emit_graph();
-
     std::ofstream f("compile_commands.json");
-    const catalyst::JSON compdb = buildCompdb(build_graph);
-    writeCompdb(compdb, f);
+    auto cwd = std::filesystem::current_path().string();
+
+    const auto cc_vec = builder.getDefinitionOf<std::vector<std::string>>("cc");
+    const auto cxx_vec = builder.getDefinitionOf<std::vector<std::string>>("cxx");
+    const auto linker_vec = builder.getLinkerVec(cxx_vec);
+    const auto archiver_vec = builder.getArchiverVec();
+    const auto cflags_vec = builder.getDefinitionOf<std::vector<std::string>>("cflags");
+    const auto cxxflags_vec = builder.getDefinitionOf<std::vector<std::string>>("cxxflags");
+    const auto ldflags_vec = builder.getDefinitionOf<std::vector<std::string>>("ldflags");
+    const auto ldlibs_vec = builder.getDefinitionOf<std::vector<std::string>>("ldlibs");
+
+    ToolchainFlags tf = {.cc = cc_vec,
+                         .cxx = cxx_vec,
+                         .linker = linker_vec,
+                         .archiver = archiver_vec,
+                         .cflags = cflags_vec,
+                         .cxxflags = cxxflags_vec,
+                         .ldflags = ldflags_vec,
+                         .ldlibs = ldlibs_vec};
+
+    std::string buf;
+    buf.reserve(1 << 21); // 2MB initial capacity
+    buf.append("[\n");
+    for (bool first = true; const auto &node : build_graph.nodes()) {
+        if (!node.step_id.has_value())
+            continue;
+        const auto &step = build_graph.steps()[*node.step_id];
+
+        if (step.tool != "cc" && step.tool != "cxx")
+            continue;
+
+        if (!first) {
+            buf.append(",\n");
+        }
+        first = false;
+
+        const std::vector<std::string_view> &inputs = step.parsed_inputs;
+        std::vector<std::string> args = build_command_args(step, true, tf);
+
+        buf.append("  {\n    \"directory\": ");
+        buf.append(escapeJSONString(cwd));
+        buf.append(",\n    \"arguments\": [");
+        for (size_t i = 0; i < args.size(); ++i) {
+            buf.append(escapeJSONString(args[i]));
+            if (i + 1 < args.size())
+                buf.append(", ");
+        }
+        buf.append("],\n");
+
+        if (!inputs.empty()) {
+            buf.append("    \"file\": ");
+            buf.append(escapeJSONString(inputs[0]));
+            buf.append(",\n");
+        }
+        buf.append("    \"output\": ");
+        buf.append(escapeJSONString(step.output));
+        buf.append("\n  }");
+
+        if (buf.size() > (1 << 20)) {
+            f.write(buf.data(), static_cast<long>(buf.size()));
+            buf.clear();
+        }
+    }
+    buf.append("\n]\n");
+    f.write(buf.data(), static_cast<long>(buf.size()));
+
     return {};
 }
 
@@ -384,7 +396,7 @@ Result<void> Executor::emit_commands() {
         if (!node.step_id.has_value())
             continue;
         const auto &step = build_graph.steps()[*node.step_id];
-        auto args = build_command_args(step, false, tf);
+        auto args = build_command_args(step, true, tf);
         for (size_t i = 0; i < args.size(); ++i) {
             std::cout << args[i] << (i == args.size() - 1 ? "" : " ");
         }

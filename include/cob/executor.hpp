@@ -143,7 +143,7 @@ private:
     struct ExecuteContext; // Forward declaration
 
     bool needs_rebuild(const BuildStep &step, StatCache &stat_cache, const ToolchainFlags &flags, uint64_t *out_hash = nullptr) const;
-    [[nodiscard]] JSON buildCompdb(const BuildGraph &build_graph) const;
+
     std::vector<std::string> build_command_args(const BuildStep &step, bool dry_run_mode, const ToolchainFlags &flags) const;
     void print_message(const BuildStep &step, ExecuteContext& ctx, bool is_tty) const;
     int process_step(size_t node_idx, ExecuteContext& ctx, StatCache& stat_cache, bool is_tty) const;
