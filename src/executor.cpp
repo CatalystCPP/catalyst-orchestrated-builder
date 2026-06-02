@@ -1,6 +1,5 @@
 #include "cob/executor.hpp"
 
-#include "cob/utils.hpp"
 #include "cob/binary.hpp"
 #include "cob/build_step.hpp"
 #include "cob/builder.hpp"
@@ -9,6 +8,7 @@
 #include "cob/mpsc_queue.hpp"
 #include "cob/process_exec.hpp"
 #include "cob/utility.hpp"
+#include "cob/utils.hpp"
 
 #include <atomic>
 #include <cassert>
@@ -16,10 +16,13 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdio>
+#include <cstring>
+#include <fcntl.h> // AT_FDCWD
 #include <filesystem>
 #include <format>
 #include <fstream>
 #include <iostream>
+#include <liburing.h>
 #include <memory>
 #include <ostream>
 #include <print>
@@ -213,24 +216,23 @@ Result<void> Executor::clean() {
     catalyst::BuildGraph build_graph = builder.emit_graph();
     std::println("Cleaning build artifacts...");
 
-    for (const auto &step : build_graph.steps()) {
-        if (config.clean_cc_only)
-            if (step.tool != "cxx" && step.tool != "cc") [[likely]]
+    std::error_code ec;
+    if (config.clean_cc_only) {
+        for (const auto &step : build_graph.steps()) {
+            // rests on the following assumptions:
+            // 1. we only have ar, ld, and sld
+            // 2. step.tool.size() > 0 which will always happen because of construction
+            //    this is important because step.tool is a std::string_view and out of bounds access is UB
+            // 3. most steps are cc/cxx
+            if (step.tool[0] != 'c') [[unlikely]]
                 continue;
-
-        if (std::filesystem::exists(step.output)) {
-            std::error_code ec;
             std::filesystem::remove(step.output, ec);
-            if (ec) {
-                std::println(stderr, "Failed to remove {}: {}", step.output, ec.message());
-            } else {
-                std::println("Removed {}", step.output);
-            }
+            std::filesystem::remove(std::string(step.output) + ".d", ec);
         }
-        // Also clean .d files if they exist
-        auto d_file = std::string(step.output) + ".d";
-        if (std::filesystem::exists(d_file)) {
-            std::filesystem::remove(d_file);
+    } else {
+        for (const auto &step : build_graph.steps()) {
+            std::filesystem::remove(step.output, ec);
+            std::filesystem::remove(std::string(step.output) + ".d", ec);
         }
     }
     return {};
@@ -453,9 +455,9 @@ struct Executor::ExecuteContext {
                    std::vector<std::string> ldlibs,
                    catalyst::BuildGraph bg)
         : ready_queue(node_count), progress_queue(8192), in_degrees(node_count), total_nodes(node_count),
-          cc_vec(std::move(cc)), cxx_vec(std::move(cxx)), linker_vec(std::move(linker)), archiver_vec(std::move(archiver)),
-          cflags_vec(std::move(cflags)), cxxflags_vec(std::move(cxxflags)), ldflags_vec(std::move(ldflags)), ldlibs_vec(std::move(ldlibs)),
-          build_graph(std::move(bg)) {
+          cc_vec(std::move(cc)), cxx_vec(std::move(cxx)), linker_vec(std::move(linker)),
+          archiver_vec(std::move(archiver)), cflags_vec(std::move(cflags)), cxxflags_vec(std::move(cxxflags)),
+          ldflags_vec(std::move(ldflags)), ldlibs_vec(std::move(ldlibs)), build_graph(std::move(bg)) {
     }
 };
 
@@ -804,7 +806,8 @@ void Executor::worker_loop(ExecuteContext &ctx, StatCache &stat_cache, bool is_t
                     // Everyone is asleep and no tasks! Deadlock/Stall detected!
                     // Since we ran topo_sort up front, this is not a cycle but a true scheduling bug (missed-notify).
 #ifdef DEBUG
-                    assert(false && "Invariant violated: Parallel executor stalled due to scheduler bug (missed-notify).");
+                    assert(false &&
+                           "Invariant violated: Parallel executor stalled due to scheduler bug (missed-notify).");
 #endif
                     ctx.tasks_available.store(std::numeric_limits<size_t>::max(), std::memory_order_release);
                     ctx.tasks_available.notify_all();
