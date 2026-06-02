@@ -169,7 +169,16 @@ either runs the parallel build or emits one of several auxiliary artifacts.
 \input{catalyst.tikz}}
 \end{center}
 
-As illustrated in the toolchain diagram, CBE operates within the broader \textbf{Catalyst Toolchain} ecosystem. The input manifest \texttt{catalyst.build} is generated directly by the \textbf{Catalyst Build System}. On the first pass of a modified manifest, the CBE Parser parses the text representation and serializes it into the binary cache \texttt{.catalyst.bin} (re-emitting it for subsequent fast-path loads). Meanwhile, LPT task-scheduling metrics are fed from the \texttt{catalyst.estimates} file, which is maintained and updated by \textbf{catalyst ccache} to store historical compilation costs. During compiler dispatch, the actual compilation statistics are fed back into \textbf{catalyst ccache} to record and refine future task estimates. Additionally, because CBE operates on a simple, low-abstraction text manifest, alternative generators (\textbf{Other Meta Build Systems} like CMake or custom wrappers) can also emit the \texttt{catalyst.build} manifest to leverage CBE's high-performance parallel execution engine.
+As illustrated in the toolchain diagram, CBE operates within the broader \textbf{Catalyst Toolchain} ecosystem.
+The input manifest \texttt{catalyst.build} is generated directly by the \textbf{Catalyst Build System}.
+On the first pass of a modified manifest, the CBE Parser parses the text representation and serializes it into the
+binary cache \texttt{.catalyst.bin} (re-emitting it for subsequent fast-path loads).
+Meanwhile, LPT task-scheduling metrics are fed from the \texttt{catalyst.estimates} file, which is maintained and
+updated by \textbf{catalyst ccache} to store historical compilation costs. During compiler dispatch, the actual compilation
+statistics are fed back into \textbf{catalyst ccache} to record and refine future task estimates. Additionally, because
+CBE operates on a simple, low-abstraction text manifest, alternative generators (\textbf{Other Meta Build Systems}
+like CMake or custom wrappers) can also emit the \texttt{catalyst.build} manifest
+to leverage CBE's high-performance parallel execution engine.
 
 The translation units map cleanly onto these stages. \texttt{cli\_args.cpp}
 produces the configuration; \texttt{parser.cpp} and \texttt{binary.cpp} feed the
