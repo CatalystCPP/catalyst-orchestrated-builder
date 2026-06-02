@@ -1,11 +1,11 @@
 # CLI Reference
 
-The `cbe` executable provides a set of cli flags to modulate behavior.
+The `cob` executable provides a set of cli flags to modulate behavior.
 
 ## Synopsis
 
 ```bash
-cbe [options]
+cob [options]
 ```
 
 ## Options

@@ -1,7 +1,7 @@
 # Doxyfile 1.9.x
 
 # Project related configuration options
-PROJECT_NAME           = "Catalyst Build Executor"
+PROJECT_NAME           = "Catalyst Orchestrated Builder"
 PROJECT_BRIEF          = "A high-speed, low-level build orchestrator"
 PROJECT_NUMBER         = 0.1.0
 OUTPUT_DIRECTORY       = docs/doxygen

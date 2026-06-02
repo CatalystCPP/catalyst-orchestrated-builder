@@ -1,6 +1,6 @@
-# Catalyst Build Executor (CBE)
+# Catalyst Orchestrated Builder (COB)
 
-``cbe`` is a high-speed, low-level build orchestrator designed as
+``cob`` is a high-speed, low-level build orchestrator designed as
 a machine-generated target for higher-level meta-build systems (with a first-class support for [catalyst](https://catalystcpp.github.io/catalyst-build-system/))
 enabling high speed incremental builds.
 

@@ -43,7 +43,7 @@ Format: `<step_type>|<input_list>|<output_file>`
 
 #### Toolchain Mapping
 
-CBE maps specific step types to command templates. It strictly enforces certain
+COB maps specific step types to command templates. It strictly enforces certain
 behaviors (like dependency generation) by injecting flags.
 
 | Type | Description | Command Template (Approximation) |
@@ -73,8 +73,8 @@ line.
 
 Important Notes(See [Implementation Details](../implementation/overview.md) for more info):
 
-1.  Dependency Tracking (`.d`): For `cc` and `cxx`, __do not__ manually add `-MMD` or `-MF` to your `$cflags`/`$cxxflags`. CBE automatically injects these to manage incremental builds correctly.
-2.  Response Files (`.rsp`): For `ld` steps with many inputs (currently >50), CBE will automatically generate a response file and pass it via `@<out>.rsp` to avoid command-line length limits.
+1.  Dependency Tracking (`.d`): For `cc` and `cxx`, __do not__ manually add `-MMD` or `-MF` to your `$cflags`/`$cxxflags`. COB automatically injects these to manage incremental builds correctly.
+2.  Response Files (`.rsp`): For `ld` steps with many inputs (currently >50), COB will automatically generate a response file and pass it via `@<out>.rsp` to avoid command-line length limits.
 
 ## Example Manifest
 

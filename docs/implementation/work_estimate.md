@@ -1,6 +1,6 @@
 # Work Estimate
 
-The `WorkEstimate` feature allows the build executor to prioritize tasks based on their estimated duration or cost. This can improve build times by scheduling heavier tasks earlier (e.g., Longest Processing Time first).
+The `WorkEstimate` feature allows the build orchestrator to prioritize tasks based on their estimated duration or cost. This can improve build times by scheduling heavier tasks earlier (e.g., Longest Processing Time first).
 
 ## Class: `catalyst::WorkEstimate`
 
