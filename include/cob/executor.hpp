@@ -1,4 +1,3 @@
-#pragma once
 
 #include "cob/builder.hpp"
 #include "cob/graph.hpp"
@@ -7,9 +6,9 @@
 #include "cob/work_estimate.hpp"
 #endif
 
-#include <shared_mutex>
-#include <mutex>
 #include <array>
+#include <shared_mutex>
+#include <span>
 #include <string>
 #include <thread>
 #include <vector>
@@ -21,14 +20,14 @@ struct JSON;
 #endif
 
 struct ToolchainFlags {
-    const std::vector<std::string> &cc;
-    const std::vector<std::string> &cxx;
-    const std::vector<std::string> &linker;
-    const std::vector<std::string> &archiver;
-    const std::vector<std::string> &cflags;
-    const std::vector<std::string> &cxxflags;
-    const std::vector<std::string> &ldflags;
-    const std::vector<std::string> &ldlibs;
+    std::span<const std::string> cc;
+    std::span<const std::string> cxx;
+    std::span<const std::string> linker;
+    std::span<const std::string> archiver;
+    std::span<const std::string> cflags;
+    std::span<const std::string> cxxflags;
+    std::span<const std::string> ldflags;
+    std::span<const std::string> ldlibs;
 };
 
 /**
@@ -94,18 +93,18 @@ public:
 };
 
 struct ExecutorConfig {
-    bool dry_run = false;                              ///< If true, print commands without executing.
-    bool clean = false;                                ///< If true, clean artifacts instead of building.
-    bool clean_cc_only = false;                        ///< If true, only clean cc and cxx steps.
-    bool silent = false;                               ///< If true, suppress all output except errors.
-    bool keep_going = false;                            ///< If true, continue building other steps after an error.
-    size_t jobs = 0;                                   ///< Number of parallel jobs (0 = auto-detect).
-    std::string build_file = "catalyst.build";         ///< Path to the build manifest.
+    bool dry_run = false;                      ///< If true, print commands without executing.
+    bool clean = false;                        ///< If true, clean artifacts instead of building.
+    bool clean_cc_only = false;                ///< If true, only clean cc and cxx steps.
+    bool silent = false;                       ///< If true, suppress all output except errors.
+    bool keep_going = false;                   ///< If true, continue building other steps after an error.
+    size_t jobs = 0;                           ///< Number of parallel jobs (0 = auto-detect).
+    std::string build_file = "catalyst.build"; ///< Path to the build manifest.
 #if FF_cob__estimates
     std::string estimates_file = "catalyst.estimates"; ///< Path to the work estimates file.
 #endif
 #if FF_cob__logging
-    std::string build_log_file;                        ///< Path to emit build stdout/stderr.
+    std::string build_log_file; ///< Path to emit build stdout/stderr.
 #endif
 };
 
@@ -156,13 +155,17 @@ public:
 private:
     struct ExecuteContext; // Forward declaration
 
-    bool needs_rebuild(const BuildStep &step, StatCache &stat_cache, const ToolchainFlags &flags, uint64_t *out_hash = nullptr) const;
+    bool needs_rebuild(const BuildStep &step,
+                       StatCache &stat_cache,
+                       const ToolchainFlags &flags,
+                       uint64_t *out_hash = nullptr) const;
 
-    std::vector<std::string> build_command_args(const BuildStep &step, bool dry_run_mode, const ToolchainFlags &flags) const;
-    void print_message(const BuildStep &step, ExecuteContext& ctx, bool is_tty) const;
-    int process_step(size_t node_idx, ExecuteContext& ctx, StatCache& stat_cache, bool is_tty) const;
-    void worker_loop(ExecuteContext& ctx, StatCache& stat_cache, bool is_tty, size_t thread_count);
-    void push_ready(size_t idx, ExecuteContext& ctx);
+    std::vector<std::string>
+    build_command_args(const BuildStep &step, bool dry_run_mode, const ToolchainFlags &flags) const;
+    void print_message(const BuildStep &step, ExecuteContext &ctx, bool is_tty) const;
+    int process_step(size_t node_idx, ExecuteContext &ctx, StatCache &stat_cache, bool is_tty) const;
+    void worker_loop(ExecuteContext &ctx, StatCache &stat_cache, bool is_tty, size_t thread_count);
+    void push_ready(size_t idx, ExecuteContext &ctx);
 
     COBBuilder builder;
     ExecutorConfig config;
