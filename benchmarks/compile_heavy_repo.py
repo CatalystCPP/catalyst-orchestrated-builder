@@ -7,7 +7,7 @@ import time
 
 def benchmark_catalyst_builds():
     """
-    Benchmarks make, ninja, and cbe within the generate_heavy_repo.ROOT_DIR,
+    Benchmarks make, ninja, and cob within the generate_heavy_repo.ROOT_DIR,
     presenting timings in a structured layout.
     """
 
@@ -17,17 +17,17 @@ def benchmark_catalyst_builds():
     # Get paths dynamically to avoid hardcoded user home directories
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(script_dir)
-    cbe_bin = os.path.join(project_root, "build/common-ccache-release/cbe")
-    cbe_system = os.path.expanduser("~/.local/bin/cbe")
+    cob_bin = os.path.join(project_root, "build/common-ccache-release/cob")
+    cob_system = os.path.expanduser("~/.local/bin/cob")
     tasks = [
         ("make", ["make", "-C", root_dir], True),
         ("ninja -t clean", ["ninja", "-C", root_dir, "-t", "clean"], False),  # Initial setup clean
         ("ninja", ["ninja", "-C", root_dir], True),
         ("ninja -t clean", ["ninja", "-C", root_dir, "-t", "clean"], True),
-        ("cbe (system)", [cbe_system, "-C", root_dir], True),
-        ("cbe (system) -t clean", [cbe_system, "-C", root_dir, "-t", "clean"], True),
-        ("cbe (built)", [cbe_bin, "-C", root_dir], True),
-        ("cbe (built) -t clean", [cbe_bin, "-C", root_dir, "-t", "clean"], True),
+        ("cob (system)", [cob_system, "-C", root_dir], True),
+        ("cob (system) -t clean", [cob_system, "-C", root_dir, "-t", "clean"], True),
+        ("cob (built)", [cob_bin, "-C", root_dir], True),
+        ("cob (built) -t clean", [cob_bin, "-C", root_dir, "-t", "clean"], True),
     ]
 
     results = []
