@@ -127,7 +127,7 @@ void FlatHashMap<Key_T, Value_T, Hash_T>::rehash(size_t new_capacity) {
     std::vector<Slot> old_slots = std::move(slots_);
     slots_ = std::vector<Slot>(new_capacity);
     size_ = 0;
-    for (auto& slot : old_slots) {
+    for (Slot& slot : old_slots) {
         if (slot.probe_distance != 0) {
             insert_helper(std::move(slot.key), std::move(slot.value));
         }

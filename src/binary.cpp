@@ -1,5 +1,6 @@
 #include "cob/binary.hpp"
 
+#include "cob/build_step.hpp"
 #include "cob/builder.hpp"
 #include "cob/file_handle.hpp"
 #include "cob/graph.hpp"
@@ -23,7 +24,7 @@ namespace {
 class StringBuffer {
 public:
     StringRef add(std::string_view sv) {
-        if (auto* ptr = buffer_cache.find(sv)) {
+        if (StringRef *ptr = buffer_cache.find(sv)) {
             return *ptr;
         }
         uint64_t offset = buffer_data.size();
@@ -201,9 +202,9 @@ Result<void> emit_bin(COBBuilder &builder) {
     }
 
     StringBuffer sb;
-    const auto &definitions = builder.definitions();
-    const auto &nodes = builder.graph().nodes();
-    const auto &steps = builder.graph().steps();
+    const Definitions &definitions = builder.definitions();
+    const std::vector<BuildGraph::Node> &nodes = builder.graph().nodes();
+    const std::vector<BuildStep> &steps = builder.graph().steps();
 
     std::vector<BinDefinition> bin_defs;
     for (const auto &[k, v] : definitions) {
@@ -213,7 +214,7 @@ Result<void> emit_bin(COBBuilder &builder) {
     // Nodes and steps are variable length, we'll write them in two passes or buffer.
     // Let's buffer to calculate sizes.
     std::vector<char> nodes_buf;
-    for (const auto &node : nodes) {
+    for (const BuildGraph::Node &node : nodes) {
         StringRef path_ref = sb.add(node.path);
         nodes_buf.insert(nodes_buf.end(),
                          reinterpret_cast<const char *>(&path_ref),
@@ -238,7 +239,7 @@ Result<void> emit_bin(COBBuilder &builder) {
     }
 
     std::vector<char> steps_buf;
-    for (const auto &step : steps) {
+    for (const BuildStep &step : steps) {
         StringRef tool_ref = sb.add(step.tool);
         StringRef inputs_ref = sb.add(step.inputs);
         StringRef output_ref = sb.add(step.output);
@@ -264,7 +265,7 @@ Result<void> emit_bin(COBBuilder &builder) {
                          reinterpret_cast<const char *>(&depfile_count) + sizeof(uint64_t));
 
         if (step.depfile_inputs.has_value()) {
-            for (const auto &di : step.depfile_inputs) {
+            for (const std::string_view &di : step.depfile_inputs) {
                 StringRef ref = sb.add(di);
                 steps_buf.insert(steps_buf.end(),
                                  reinterpret_cast<const char *>(&ref),

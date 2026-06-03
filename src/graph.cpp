@@ -10,13 +10,14 @@
 #include <filesystem>
 #include <format>
 #include <functional>
+#include <string_view>
 
 namespace fs = std::filesystem;
 
 namespace catalyst {
 
 size_t BuildGraph::get_or_create_node(std::string_view path) {
-    if (auto* ptr = index_.find(path)) {
+    if (size_t *ptr = index_.find(path)) {
         return *ptr;
     }
 
@@ -156,7 +157,7 @@ Result<size_t> BuildGraph::add_step(BuildStep step) {
             continue;
 
         if (in_path.starts_with('!')) {
-            auto opaque_path = in_path.substr(1);
+            std::string_view opaque_path = in_path.substr(1);
             step.opaque_inputs.push_back(opaque_path);
         } else {
             step.parsed_inputs.push_back(in_path);
@@ -167,7 +168,7 @@ Result<size_t> BuildGraph::add_step(BuildStep step) {
     steps_.push_back(std::move(step)); // Store the step
     nodes_[out_id].step_id = step_id;
 
-    auto &live_step = steps_.back();
+    BuildStep &live_step = steps_.back();
 
     if (live_step.tool == "cc" || live_step.tool == "cxx") {
         auto depfile_parse_callback = [this, out_id, &step = live_step](std::string_view fn) {
@@ -182,14 +183,14 @@ Result<size_t> BuildGraph::add_step(BuildStep step) {
     }
 
     // Iterate over parsed_inputs to add edges
-    for (const auto &in_path : live_step.parsed_inputs) {
+    for (const std::string_view &in_path : live_step.parsed_inputs) {
         size_t in_id = get_or_create_node(in_path);
         nodes_[in_id].out_edges.push_back(out_id);
     }
 
     // Iterate over opaque_inputs to add edges
     if (live_step.opaque_inputs.has_value()) {
-        for (const auto &in_path : live_step.opaque_inputs) {
+        for (const std::string_view &in_path : live_step.opaque_inputs) {
             size_t in_id = get_or_create_node(in_path);
             nodes_[in_id].out_edges.push_back(out_id);
         }
@@ -222,9 +223,9 @@ Result<std::vector<size_t>> BuildGraph::topo_sort() const {
         status[i] = STATUS::WORKING;
 
         while (!stack.empty()) {
-            auto &frame = stack.back();
+            StackFrame &frame = stack.back();
             size_t u = frame.node;
-            const auto &node = nodes_[u];
+            const BuildGraph::Node &node = nodes_[u];
 
             if (frame.next_edge_idx < node.out_edges.size()) {
                 size_t v = node.out_edges[frame.next_edge_idx];
