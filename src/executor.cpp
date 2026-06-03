@@ -665,9 +665,9 @@ void Executor::printMessage(const BuildStep &step, ExecuteContext &ctx, bool is_
     } else {
         size_t current = ctx.steps_completed.fetch_add(1, std::memory_order_relaxed) + 1;
         if (is_tty) {
-            msg = std::format("\r\033[K[{}/{}] {} {}", current, ctx.steps_to_build, action, target);
+            msg = std::format("\r\033[K[{}] {} {}", current, action, target);
         } else {
-            msg = std::format("[{}/{}] {:<15} {}\n", current, ctx.steps_to_build, action, target);
+            msg = std::format("[{}] {:<15} {}\n", current, action, target);
         }
     }
 
@@ -977,25 +977,16 @@ Result<void> Executor::execute() {
     }
 #endif
 
-    // Pre-count steps that need rebuilding and find final output target
+    // Find final output target (cheap, no filesystem scan)
     std::string final_output_name;
-    ToolchainFlags tf = {.cc = ctx.cc_vec,
-                         .cxx = ctx.cxx_vec,
-                         .linker = ctx.linker_vec,
-                         .archiver = ctx.archiver_vec,
-                         .cflags = ctx.cflags_vec,
-                         .cxxflags = ctx.cxxflags_vec,
-                         .ldflags = ctx.ldflags_vec,
-                         .ldlibs = ctx.ldlibs_vec};
-    for (size_t i = 0; i < ctx.total_nodes; ++i) {
-        const BuildGraph::Node &node = ctx.build_graph.nodes()[i];
-        if (node.step_id.has_value()) {
-            const BuildStep &step = ctx.build_graph.steps()[*node.step_id];
-            if (needsRebuild(step, stat_cache, tf)) {
-                ctx.steps_to_build++;
-            }
-            if (node.out_edges.empty()) {
-                final_output_name = step.output;
+    if (!config.silent) {
+        for (size_t i = 0; i < ctx.total_nodes; ++i) {
+            const BuildGraph::Node &node = ctx.build_graph.nodes()[i];
+            if (node.step_id.has_value()) {
+                const BuildStep &step = ctx.build_graph.steps()[*node.step_id];
+                if (node.out_edges.empty()) {
+                    final_output_name = step.output;
+                }
             }
         }
     }
