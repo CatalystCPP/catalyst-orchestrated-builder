@@ -33,7 +33,7 @@ auto StatCache::get_or_update(const std::filesystem::path &p)
     }
 
     std::error_code ec;
-    auto time = std::filesystem::last_write_time(p, ec);
+    std::filesystem::file_time_type time = std::filesystem::last_write_time(p, ec);
     b.entries.insert(it, {.path=p, .time=time, .ec=ec});
     return {time, ec};
 }

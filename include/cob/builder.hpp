@@ -70,7 +70,7 @@ public:
 private:
     template <typename Return_T> Return_T getDefinitionOf(std::string_view key) const {
         if constexpr (std::is_same_v<Return_T, std::string>) {
-            if (auto it = definitions_.find(key); it != definitions_.end())
+            if (const Definitions::const_iterator it = definitions_.find(key); it != definitions_.end())
                 return std::string(it->second);
             return "";
         } else if constexpr (std::is_same_v<Return_T, std::vector<std::string>>) {
@@ -81,7 +81,7 @@ private:
         }
     }
 
-    std::vector<std::string> getLinkerVec(const auto &cxx_vec) const {
+    std::vector<std::string> getLinkerVec(const std::vector<std::string> &cxx_vec) const {
         auto linker_vec = getDefinitionOf<std::vector<std::string>>("linker");
         if (linker_vec.empty() || (linker_vec.size() == 1 && linker_vec[0].empty())) {
             linker_vec = cxx_vec;

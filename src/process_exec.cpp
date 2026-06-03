@@ -40,7 +40,7 @@ Result<std::pair<int, std::string>> process_exec(std::vector<std::string> &&args
         for (const auto &[key, value] : *env) {
             env_strings.push_back(key + "=" + value);
         }
-        for (const auto &s : env_strings) {
+        for (const std::string &s : env_strings) {
             env_ptrs.push_back(s.c_str());
         }
         env_ptrs.push_back(nullptr);

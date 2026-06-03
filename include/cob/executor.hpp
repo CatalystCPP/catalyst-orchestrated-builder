@@ -1,3 +1,4 @@
+#pragma once
 
 #include "cob/builder.hpp"
 #include "cob/graph.hpp"

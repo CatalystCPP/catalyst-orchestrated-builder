@@ -3,6 +3,7 @@
 #include "cob/binary.hpp"
 #include "cob/build_step.hpp"
 #include "cob/builder.hpp"
+#include "cob/graph.hpp"
 #include "cob/json.hpp"
 #include "cob/mpmc_queue.hpp"
 #include "cob/mpsc_queue.hpp"
@@ -35,6 +36,8 @@
 #include <thread>
 #include <unistd.h>
 #include <vector>
+
+namespace fs = std::filesystem;
 
 #if FF_cob__heterogenous_core_affinity
 #include <sys/resource.h>
@@ -146,10 +149,10 @@ void dumpJSON(const catalyst::JSON &j, std::ofstream &os) {
 
 bool isNewer(const std::filesystem::path &new_file, const std::filesystem::path &old_file) {
     std::error_code ec;
-    auto new_time = std::filesystem::last_write_time(new_file, ec);
+    fs::file_time_type new_time = std::filesystem::last_write_time(new_file, ec);
     if (ec)
         return true;
-    auto old_time = std::filesystem::last_write_time(old_file, ec);
+    fs::file_time_type old_time = std::filesystem::last_write_time(old_file, ec);
     if (ec)
         return true;
     return new_time > old_time;
@@ -167,7 +170,7 @@ Result<void> Executor::clean() {
 
     std::error_code ec;
     if (config.clean_cc_only) {
-        for (const auto &step : build_graph.steps()) {
+        for (const BuildStep &step : build_graph.steps()) {
             // rests on the following assumptions:
             // 1. we only have ar, ld, and sld
             // 2. step.tool.size() > 0 which will always happen because of construction
@@ -179,7 +182,7 @@ Result<void> Executor::clean() {
             std::filesystem::remove(std::string(step.output) + ".d", ec);
         }
     } else {
-        for (const auto &step : build_graph.steps()) {
+        for (const BuildStep &step : build_graph.steps()) {
             std::filesystem::remove(step.output, ec);
             std::filesystem::remove(std::string(step.output) + ".d", ec);
         }
@@ -191,7 +194,7 @@ namespace {
 [[clang::always_inline]]
 inline uint64_t hashCommand(std::span<const std::string> args) {
     uint64_t hash = FNV_OFFSET_BASIS;
-    for (const auto &arg : args) {
+    for (const std::string &arg : args) {
         hash = fnv1a_hash(arg, hash);
         hash = fnv1a_hash(" ", hash);
     }
@@ -219,28 +222,28 @@ bool inline Executor::needs_rebuild(const BuildStep &step,
         return true;
     }
 
-    auto output_modtime = std::filesystem::last_write_time(step.output);
+    fs::file_time_type output_modtime = std::filesystem::last_write_time(step.output);
 
     if (stat_cache.changed_since(config.build_file, output_modtime)) {
         return true;
     }
 
     if (step.depfile_inputs.has_value()) {
-        for (const auto &dep : step.depfile_inputs) {
+        for (const std::string_view &dep : step.depfile_inputs) {
             if (stat_cache.changed_since(std::filesystem::path(dep), output_modtime)) {
                 return true;
             }
         }
     }
     if (step.opaque_inputs.has_value()) {
-        for (const auto &opaque : step.opaque_inputs) {
+        for (const std::string_view &opaque : step.opaque_inputs) {
             if (stat_cache.changed_since(std::filesystem::path(opaque), output_modtime)) {
                 return true;
             }
         }
     }
     // this is our way of making sure that the .d file isn't stale
-    for (const auto &input : step.parsed_inputs) {
+    for (const std::string_view &input : step.parsed_inputs) {
         if (stat_cache.changed_since(input, output_modtime)) {
             return true;
         }
@@ -275,11 +278,11 @@ Result<void> Executor::emit_graph() {
     std::cout << "  node [shape=box, style=filled, fontname=\"Helvetica\"];\n";
 
     for (size_t i = 0; i < build_graph.nodes().size(); ++i) {
-        const auto &node = build_graph.nodes()[i];
+        const BuildGraph::Node &node = build_graph.nodes()[i];
         std::string color = "0.9 0.9 0.9"; // light gray for source files
 
         if (node.step_id.has_value()) {
-            const auto &step = build_graph.steps()[*node.step_id];
+            const BuildStep &step = build_graph.steps()[*node.step_id];
             if (needs_rebuild(step, stat_cache, tf)) {
                 color = "green";
             } else {
@@ -300,7 +303,7 @@ Result<void> Executor::emit_graph() {
 Result<void> Executor::emit_compdb() {
     catalyst::BuildGraph build_graph = builder.emit_graph();
     std::ofstream f("compile_commands.json");
-    auto cwd = std::filesystem::current_path().string();
+    std::string cwd = std::filesystem::current_path().string();
 
     const auto cc_vec = builder.getDefinitionOf<std::vector<std::string>>("cc");
     const auto cxx_vec = builder.getDefinitionOf<std::vector<std::string>>("cxx");
@@ -323,10 +326,10 @@ Result<void> Executor::emit_compdb() {
     std::string buf;
     buf.reserve(1 << 21); // 2MB initial capacity
     buf.append("[\n");
-    for (bool first = true; const auto &node : build_graph.nodes()) {
+    for (bool first = true; const BuildGraph::Node &node : build_graph.nodes()) {
         if (!node.step_id.has_value())
             continue;
-        const auto &step = build_graph.steps()[*node.step_id];
+        const BuildStep &step = build_graph.steps()[*node.step_id];
 
         if (step.tool != "cc" && step.tool != "cxx")
             continue;
@@ -396,11 +399,11 @@ Result<void> Executor::emit_commands() {
                          .ldlibs = ldlibs_vec};
 
     for (size_t node_idx : order) {
-        const auto &node = build_graph.nodes()[node_idx];
+        const BuildGraph::Node &node = build_graph.nodes()[node_idx];
         if (!node.step_id.has_value())
             continue;
-        const auto &step = build_graph.steps()[*node.step_id];
-        auto args = build_command_args(step, true, tf);
+        const BuildStep &step = build_graph.steps()[*node.step_id];
+        std::vector<std::string> args = build_command_args(step, true, tf);
         for (size_t i = 0; i < args.size(); ++i) {
             std::cout << args[i] << (i == args.size() - 1 ? "" : " ");
         }
@@ -483,7 +486,7 @@ struct Executor::ExecuteContext {
 std::vector<std::string>
 Executor::build_command_args(const BuildStep &step, bool dry_run_mode, const ToolchainFlags &flags) const {
     std::vector<std::string> args;
-    static constexpr auto ARGS_VEC_INIT_SZ = 40;
+    static constexpr size_t ARGS_VEC_INIT_SZ = 40Z;
     args.reserve(ARGS_VEC_INIT_SZ);
 
     auto add_parts = [&args](const auto &parts) {
@@ -495,13 +498,13 @@ Executor::build_command_args(const BuildStep &step, bool dry_run_mode, const Too
         }
     };
 
-    const auto &inputs = step.parsed_inputs;
+    const std::vector<std::string_view> &inputs = step.parsed_inputs;
 
     if (step.tool == "cc") {
         add_parts(flags.cc);
         add_parts(flags.cflags);
         args.insert(args.end(), {"-MMD", "-MF", std::string(step.output) + ".d", "-c"});
-        for (const auto &in : inputs)
+        for (const std::string_view &in : inputs)
             args.emplace_back(in);
         args.emplace_back("-o");
         args.emplace_back(step.output);
@@ -509,13 +512,13 @@ Executor::build_command_args(const BuildStep &step, bool dry_run_mode, const Too
         add_parts(flags.cxx);
         add_parts(flags.cxxflags);
         args.insert(args.end(), {"-MMD", "-MF", std::string(step.output) + ".d", "-c"});
-        for (const auto &in : inputs)
+        for (const std::string_view &in : inputs)
             args.emplace_back(in);
         args.emplace_back("-o");
         args.emplace_back(step.output);
     } else if (step.tool == "ld") {
         add_parts(flags.linker);
-        static constexpr auto TUNABLE_INPUT_SZ = 50;
+        static constexpr size_t TUNABLE_INPUT_SZ = 50Z;
         std::filesystem::path rsp_path = std::filesystem::path(step.output).replace_extension(".rsp");
 
         bool use_rsp = false;
@@ -525,9 +528,9 @@ Executor::build_command_args(const BuildStep &step, bool dry_run_mode, const Too
             use_rsp = true;
             if (!dry_run_mode) {
                 std::string rsp_content;
-                constexpr auto TUNABLE_RSP_PATH_ESTIMATE = 100;
+                constexpr size_t TUNABLE_RSP_PATH_ESTIMATE = 100Z; // estimate on the size of a single RSP element path.
                 rsp_content.reserve(inputs.size() * TUNABLE_RSP_PATH_ESTIMATE);
-                for (const auto &input : inputs) {
+                for (const std::string_view &input : inputs) {
                     rsp_content += input;
                     rsp_content += '\n';
                 }
@@ -539,7 +542,7 @@ Executor::build_command_args(const BuildStep &step, bool dry_run_mode, const Too
         if (use_rsp) {
             args.push_back(std::string("@") + rsp_path.string());
         } else {
-            for (const auto &in : inputs)
+            for (const std::string_view &in : inputs)
                 args.emplace_back(in);
         }
         args.emplace_back("-o");
@@ -549,7 +552,7 @@ Executor::build_command_args(const BuildStep &step, bool dry_run_mode, const Too
     } else if (step.tool == "ar") {
         add_parts(flags.archiver);
         if (!flags.archiver.empty()) {
-            const auto &cmd = flags.archiver.front();
+            const std::string &cmd = flags.archiver.front();
             if (cmd.ends_with("ar") || cmd.ends_with("ar.exe") || flags.archiver.size() == 1) {
                 args.emplace_back("rcs");
                 args.emplace_back(step.output);
@@ -561,12 +564,12 @@ Executor::build_command_args(const BuildStep &step, bool dry_run_mode, const Too
         } else {
             args.insert(args.end(), {"ar", "rcs", std::string(step.output)});
         }
-        for (const auto &in : inputs)
+        for (const std::string_view &in : inputs)
             args.emplace_back(in);
     } else if (step.tool == "sld") {
         add_parts(flags.linker);
         args.emplace_back("-shared");
-        for (const auto &in : inputs)
+        for (const std::string_view &in : inputs)
             args.emplace_back(in);
         args.emplace_back("-o");
         args.emplace_back(step.output);
@@ -651,7 +654,7 @@ void Executor::print_message(const BuildStep &step, ExecuteContext &ctx, bool is
     if (config.dry_run) {
         msg = std::format("[DRY RUN] {} {}\n", action, target);
     } else {
-        auto current = ctx.steps_completed.fetch_add(1, std::memory_order_relaxed) + 1;
+        size_t current = ctx.steps_completed.fetch_add(1, std::memory_order_relaxed) + 1;
         if (is_tty) {
             msg = std::format("\r\033[K[{}/{}] {} {}", current, ctx.steps_to_build, action, target);
         } else {
@@ -674,9 +677,9 @@ void Executor::print_message(const BuildStep &step, ExecuteContext &ctx, bool is
  */
 int Executor::process_step(size_t node_idx, ExecuteContext &ctx, StatCache &stat_cache, bool is_tty) const {
     // NOLINTBEGIN(performance-avoid-endl)
-    const auto &node = ctx.build_graph.nodes()[node_idx];
+    const BuildGraph::Node &node = ctx.build_graph.nodes()[node_idx];
     if (node.step_id.has_value()) {
-        auto &step = ctx.build_graph.steps()[*node.step_id];
+        BuildStep &step = ctx.build_graph.steps()[*node.step_id];
 
         ToolchainFlags tf = {.cc = ctx.cc_vec,
                              .cxx = ctx.cxx_vec,
@@ -693,7 +696,7 @@ int Executor::process_step(size_t node_idx, ExecuteContext &ctx, StatCache &stat
             if (config.dry_run)
                 return 0;
 
-            auto args = build_command_args(step, false, tf);
+            std::vector<std::string> args = build_command_args(step, false, tf);
 
 #if FF_cob__profiling
             auto start = std::chrono::steady_clock::now();
@@ -859,7 +862,7 @@ void Executor::worker_loop(ExecuteContext &ctx, StatCache &stat_cache, bool is_t
             }
         } else {
             size_t prev_completed = ctx.completed_count.fetch_add(1, std::memory_order_release);
-            const auto &node = ctx.build_graph.nodes()[task.node_idx];
+            const BuildGraph::Node &node = ctx.build_graph.nodes()[task.node_idx];
             for (size_t neighbor : node.out_edges) {
                 if (ctx.in_degrees[neighbor].fetch_sub(1, std::memory_order_acq_rel) == 1) {
                     push_ready(neighbor, ctx);
@@ -913,7 +916,7 @@ Result<void> Executor::execute() {
 
     // Build initial in-degrees in a thread-safe atomic vector
     std::vector<int> temp_in_degrees(ctx.total_nodes, 0);
-    for (const auto &node : ctx.build_graph.nodes()) {
+    for (const BuildGraph::Node &node : ctx.build_graph.nodes()) {
         for (size_t out : node.out_edges) {
             temp_in_degrees[out]++;
         }
@@ -939,7 +942,7 @@ Result<void> Executor::execute() {
     std::ranges::sort(initial_tasks, [](const ExecuteContext::Task &a, const ExecuteContext::Task &b) {
         return a.estimate > b.estimate;
     });
-    for (const auto &task : initial_tasks) {
+    for (const ExecuteContext::Task &task : initial_tasks) {
 #ifdef DEBUG
         bool enqueued = ctx.ready_queue.enqueue(task);
         assert(enqueued && "Invariant violated: ready_queue overflow during initialization");
@@ -975,9 +978,9 @@ Result<void> Executor::execute() {
                          .ldflags = ctx.ldflags_vec,
                          .ldlibs = ctx.ldlibs_vec};
     for (size_t i = 0; i < ctx.total_nodes; ++i) {
-        const auto &node = ctx.build_graph.nodes()[i];
+        const BuildGraph::Node &node = ctx.build_graph.nodes()[i];
         if (node.step_id.has_value()) {
-            const auto &step = ctx.build_graph.steps()[*node.step_id];
+            const BuildStep &step = ctx.build_graph.steps()[*node.step_id];
             if (needs_rebuild(step, stat_cache, tf)) {
                 ctx.steps_to_build++;
             }
@@ -1069,21 +1072,21 @@ Result<void> Executor::execute() {
     }
 
     if (!config.silent && !final_output_name.empty()) {
-        auto now = std::chrono::system_clock::now();
+        std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
         auto now_ns = std::chrono::time_point_cast<std::chrono::nanoseconds>(now);
         auto epoch_ns = now_ns.time_since_epoch().count();
         std::time_t now_time = std::chrono::system_clock::to_time_t(now);
         std::tm local_tm{};
         localtime_r(&now_time, &local_tm);
         auto subsec_ns = epoch_ns % 1'000'000'000;
-        auto timestamp = std::format("{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:09}",
-                                     local_tm.tm_year + 1900,
-                                     local_tm.tm_mon + 1,
-                                     local_tm.tm_mday,
-                                     local_tm.tm_hour,
-                                     local_tm.tm_min,
-                                     local_tm.tm_sec,
-                                     subsec_ns);
+        std::string timestamp = std::format("{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:09}",
+                                       local_tm.tm_year + 1900,
+                                       local_tm.tm_mon + 1,
+                                       local_tm.tm_mday,
+                                       local_tm.tm_hour,
+                                       local_tm.tm_min,
+                                       local_tm.tm_sec,
+                                       subsec_ns);
         if (is_tty) {
             std::println("\r\033[K[{}] \033[32m[COB FINISHED: {}]\033[0m", timestamp, final_output_name);
         } else {
