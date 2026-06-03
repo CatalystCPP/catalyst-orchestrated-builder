@@ -48,8 +48,8 @@ behaviors (like dependency generation) by injecting flags.
 
 | Type | Description | Command Template (Approximation) |
 | ---- | ---- | ---- |
-| `cc` | C Compile | `$cc $cflags -MMD -MF $out.d -c $in -o $out` |
-| `cxx` | C++ Compile | `$cxx $cxxflags -MMD -MF $out.d -c $in -o $out` |
+| `cc` | C Compile | `$cc $cflags -MMD -MT $out -MF $out.d -c $in -o $out` |
+| `cxx` | C++ Compile | `$cxx $cxxflags -MMD -MT $out -MF $out.d -c $in -o $out` |
 | `ld` | Binary Link | `$cxx $in -o $out $ldflags $ldlibs` |
 | `ar` | Static Link | `ar rcs $out $in` |
 | `sld` | Shared Link | `$cxx -shared $in -o $out` |
@@ -73,7 +73,7 @@ line.
 
 Important Notes(See [Implementation Details](../implementation/overview.md) for more info):
 
-1.  Dependency Tracking (`.d`): For `cc` and `cxx`, __do not__ manually add `-MMD` or `-MF` to your `$cflags`/`$cxxflags`. COB automatically injects these to manage incremental builds correctly.
+1.  Dependency Tracking (`.d`): For `cc` and `cxx`, __do not__ manually add `-MMD`, `-MT`, or `-MF` to your `$cflags`/`$cxxflags`. COB automatically injects these to manage incremental builds correctly.
 2.  Response Files (`.rsp`): For `ld` steps with many inputs (currently >50), COB will automatically generate a response file and pass it via `@<out>.rsp` to avoid command-line length limits.
 
 ## Example Manifest

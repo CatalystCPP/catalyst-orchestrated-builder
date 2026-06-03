@@ -527,7 +527,7 @@ Executor::buildCommandArgs(const BuildStep &step, bool dry_run_mode, const Toolc
     if (step.tool == "cc") {
         add_parts(flags.cc);
         add_parts(flags.cflags);
-        args.insert(args.end(), {"-MMD", "-MF", std::string(step.output) + ".d", "-c"});
+        args.insert(args.end(), {"-MMD", "-MT", std::string(step.output), "-MF", std::string(step.output) + ".d", "-c"});
         for (const std::string_view &in : inputs)
             args.emplace_back(in);
         args.emplace_back("-o");
@@ -535,7 +535,7 @@ Executor::buildCommandArgs(const BuildStep &step, bool dry_run_mode, const Toolc
     } else if (step.tool == "cxx") {
         add_parts(flags.cxx);
         add_parts(flags.cxxflags);
-        args.insert(args.end(), {"-MMD", "-MF", std::string(step.output) + ".d", "-c"});
+        args.insert(args.end(), {"-MMD", "-MT", std::string(step.output), "-MF", std::string(step.output) + ".d", "-c"});
         for (const std::string_view &in : inputs)
             args.emplace_back(in);
         args.emplace_back("-o");
