@@ -35,7 +35,7 @@ public:
         return ref;
     }
 
-    const std::string &data() const {
+    [[nodiscard]] const std::string &data() const {
         return buffer_data;
     }
 
@@ -61,7 +61,7 @@ struct BinDefinition {
 
 } // namespace
 
-Result<void> parse_bin(COBBuilder &builder) {
+Result<void> parseBin(COBBuilder &builder) {
     std::shared_ptr<MappedFile> file;
     try {
         file = std::make_shared<MappedFile>(".catalyst.bin");
@@ -195,7 +195,7 @@ Result<void> parse_bin(COBBuilder &builder) {
     return {};
 }
 
-Result<void> emit_bin(COBBuilder &builder) {
+Result<void> emitBin(COBBuilder &builder) {
     std::ofstream out(".catalyst.bin.tmp", std::ios::binary);
     if (!out) {
         return std::unexpected("Failed to open .catalyst.bin.tmp for writing");

@@ -25,7 +25,12 @@ public:
      * @param bs The build step to add.
      * @return Success or error.
      */
-    Result<void> add_step(BuildStep &&bs);
+    Result<void> add_step(BuildStep &&bs) {
+        auto res = graph_.addStep(std::move(bs));
+        if (!res)
+            return std::unexpected(res.error());
+        return {};
+    }
 
     const BuildGraph &graph() const {
         return graph_;
@@ -53,7 +58,7 @@ public:
      * @param res A shared pointer to the resource.
      */
     void add_resource(std::shared_ptr<void> res) {
-        graph_.add_resource(std::move(res));
+        graph_.addResource(std::move(res));
     }
 
     const Definitions &definitions() const {
@@ -61,7 +66,7 @@ public:
     }
 
     void load_graph_data(BuildGraph::SerializedData &&data) {
-        graph_.load_serialized_data(std::move(data));
+        graph_.loadSerializedData(std::move(data));
     }
 
     friend Result<void> parse(COBBuilder &, const std::filesystem::path &);

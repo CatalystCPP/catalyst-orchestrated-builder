@@ -51,11 +51,11 @@ int main(const int argc, const char *const *argv) {
     catalyst::Executor executor{std::move(builder), config};
 
     if (compdb) {
-        auto _ = executor.emit_compdb();
+        auto _ = executor.emitCompDB();
     } else if (graph) {
-        auto _ = executor.emit_graph();
+        auto _ = executor.emitGraph();
     } else if (commands) {
-        auto _ = executor.emit_commands();
+        auto _ = executor.emitCommands();
     } else if (config.clean) {
         if (auto executor_clean_res = executor.clean(); !executor_clean_res) {
             std::println(std::cerr, "Clean failed: {}", executor_clean_res.error());

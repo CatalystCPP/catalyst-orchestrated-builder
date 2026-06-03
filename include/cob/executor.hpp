@@ -1,4 +1,4 @@
-
+#pragma once
 #include "cob/builder.hpp"
 #include "cob/graph.hpp"
 #include "cob/utility.hpp"
@@ -54,7 +54,7 @@ class StatCache {
     static constexpr size_t NUM_BUCKETS = 128;
     std::array<Bucket, NUM_BUCKETS> buckets;
 
-    size_t get_bucket_index(const std::filesystem::path &p) const {
+    [[nodiscard]] static size_t getBucketIndex(const std::filesystem::path &p) {
         return std::hash<std::filesystem::path::string_type>{}(p.native()) % NUM_BUCKETS;
     }
 
@@ -64,7 +64,7 @@ public:
      * @param p The file path to check.
      * @return A pair containing the last write time and any error code.
      */
-    std::pair<std::filesystem::file_time_type, std::error_code> get_or_update(const std::filesystem::path &p);
+    std::pair<std::filesystem::file_time_type, std::error_code> getOrUpdate(const std::filesystem::path &p);
 
     /**
      * @brief Checks if an input file has changed since a given output timestamp.
@@ -72,7 +72,7 @@ public:
      * @param output_time The timestamp of the output file.
      * @return True if input is newer or stat failed, false otherwise.
      */
-    bool changed_since(const std::filesystem::path &input, std::filesystem::file_time_type output_time);
+    bool changedSince(const std::filesystem::path &input, std::filesystem::file_time_type output_time);
 
     /**
      * @brief Drops any cached entry for a path so the next query re-stats the file.
@@ -89,7 +89,7 @@ public:
     /**
      * @brief Returns the number of entries in the cache (primarily for unit tests).
      */
-    size_t get_cache_size() const;
+    [[nodiscard]] size_t getCacheSize() const;
 };
 
 struct ExecutorConfig {
@@ -116,7 +116,7 @@ struct ExecutorConfig {
  */
 class Executor {
 public:
-    Executor(COBBuilder &&builder, const ExecutorConfig &config);
+    Executor(COBBuilder &&builder, ExecutorConfig config);
 
     /**
      * @brief Executes the build.
@@ -138,34 +138,38 @@ public:
      * @brief Generates a compile_commands.json file for tooling integration.
      * @return Success or error.
      */
-    Result<void> emit_compdb();
+    Result<void> emitCompDB();
 
     /**
      * @brief Prints a Graphviz DOT representation of the build graph to stdout.
      * @return Success or error.
      */
-    Result<void> emit_graph();
+    Result<void> emitGraph();
 
     /**
      * @brief Prints the actual commands that would be executed to stdout.
      * @return Success or error.
      */
-    Result<void> emit_commands();
+    Result<void> emitCommands();
 
 private:
     struct ExecuteContext; // Forward declaration
 
-    bool needs_rebuild(const BuildStep &step,
+    bool needsRebuild(const BuildStep &step,
                        StatCache &stat_cache,
                        const ToolchainFlags &flags,
                        uint64_t *out_hash = nullptr) const;
 
-    std::vector<std::string>
-    build_command_args(const BuildStep &step, bool dry_run_mode, const ToolchainFlags &flags) const;
-    void print_message(const BuildStep &step, ExecuteContext &ctx, bool is_tty) const;
-    int process_step(size_t node_idx, ExecuteContext &ctx, StatCache &stat_cache, bool is_tty) const;
-    void worker_loop(ExecuteContext &ctx, StatCache &stat_cache, bool is_tty, size_t thread_count);
-    void push_ready(size_t idx, ExecuteContext &ctx);
+    [[nodiscard]] std::vector<std::string>
+    buildCommandArgs(const BuildStep &step, bool dry_run_mode, const ToolchainFlags &flags) const;
+    void printMessage(const BuildStep &step, ExecuteContext &ctx, bool is_tty) const;
+    int processStep(size_t node_idx, ExecuteContext &ctx, StatCache &stat_cache, bool is_tty) const;
+    void workerLoop(ExecuteContext &ctx, StatCache &stat_cache, bool is_tty, size_t thread_count);
+#if FF_cob__estimates
+    static void pushReady(size_t idx, ExecuteContext &ctx, WorkEstimate *estimator);
+#else
+    static void pushReady(size_t idx, ExecuteContext &ctx, void *estimator);
+#endif
 
     COBBuilder builder;
     ExecutorConfig config;

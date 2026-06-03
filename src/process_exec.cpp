@@ -3,7 +3,6 @@
 #include "cob/utility.hpp"
 
 #include <expected>
-#include <future>
 #include <optional>
 #include <reproc++/run.hpp>
 #include <string>
@@ -11,10 +10,10 @@
 #include <vector>
 
 namespace catalyst {
-Result<std::pair<int, std::string>> process_exec(std::vector<std::string> &&args,
-                         std::optional<std::string> working_dir,
-                         std::optional<std::vector<std::pair<std::string, std::string>>> env,
-                         bool capture_output) {
+Result<std::pair<int, std::string>> process_exec(const std::vector<std::string> &args,
+                                                 std::optional<std::string> working_dir,
+                                                 std::optional<std::vector<std::pair<std::string, std::string>>> env,
+                                                 bool capture_output) {
     if (args.empty()) {
         return std::unexpected("Cannot execute empty command");
     }
@@ -38,7 +37,9 @@ Result<std::pair<int, std::string>> process_exec(std::vector<std::string> &&args
     if (env) {
         options.env.behavior = reproc::env::extend;
         for (const auto &[key, value] : *env) {
-            env_strings.push_back(key + "=" + value);
+            std::string &s = env_strings.emplace_back();
+            s.reserve(key.size() + 1 + value.size());
+            std::format_to(std::back_inserter(s), "{}={}", key, value);
         }
         for (const std::string &s : env_strings) {
             env_ptrs.push_back(s.c_str());

@@ -18,7 +18,7 @@ struct StringRef {
  * @param builder The builder to populate.
  * @return Success or error.
  */
-Result<void> parse_bin(COBBuilder &builder);
+Result<void> parseBin(COBBuilder &builder);
 
 /**
  * @brief Serializes the current build graph to the binary cache format.
@@ -26,6 +26,6 @@ Result<void> parse_bin(COBBuilder &builder);
  * @param builder The builder containing the graph to serialize.
  * @return Success or error.
  */
-Result<void> emit_bin(COBBuilder &builder);
+Result<void> emitBin(COBBuilder &builder);
 
 } // namespace catalyst

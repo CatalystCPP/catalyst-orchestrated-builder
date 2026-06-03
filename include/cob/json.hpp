@@ -1,10 +1,7 @@
 #pragma once
 
-#include <algorithm>
-#include <cstdio>
+#include <cstdint>
 #include <flat_map>
-#include <ostream>
-#include <ranges>
 #include <string>
 #include <string_view>
 #include <utility>

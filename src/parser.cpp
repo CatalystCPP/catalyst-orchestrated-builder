@@ -12,7 +12,7 @@ namespace catalyst {
 
 namespace {
 
-Result<void> parse_def(const std::string_view line, COBBuilder &builder) {
+Result<void> parseDEF(const std::string_view line, COBBuilder &builder) {
     size_t first_pipe = line.find('|');
     if (first_pipe == std::string_view::npos) {
         return std::unexpected(std::format("Malformed def line (missing first pipe): {}", line));
@@ -30,7 +30,7 @@ Result<void> parse_def(const std::string_view line, COBBuilder &builder) {
     return {};
 }
 
-Result<void> parse_step(const std::string_view line, COBBuilder &builder) {
+Result<void> parseStep(const std::string_view line, COBBuilder &builder) {
     size_t first_pipe = line.find('|');
     if (first_pipe == std::string_view::npos) {
         return std::unexpected(std::format("Malformed step line (missing first pipe): {}", line));
@@ -58,7 +58,7 @@ Result<void> parse(COBBuilder &builder, const std::filesystem::path &path) {
 #if FF_cob__binary == 1
     if (std::filesystem::exists(".catalyst.bin") &&
         std::filesystem::last_write_time(".catalyst.bin") > std::filesystem::last_write_time(path)) {
-        return parse_bin(builder);
+        return parseBin(builder);
     }
 #endif
     std::string_view content;
@@ -88,11 +88,11 @@ Result<void> parse(COBBuilder &builder, const std::filesystem::path &path) {
             if (line.starts_with("#")) {
                 // Comment
             } else if (line.starts_with("DEF|")) {
-                auto res = parse_def(line, builder);
+                auto res = parseDEF(line, builder);
                 if (!res)
                     return res;
-            } else {
-                auto res = parse_step(line, builder);
+            } else [[likely]] {
+                auto res = parseStep(line, builder);
                 if (!res)
                     return res;
             }
@@ -101,7 +101,7 @@ Result<void> parse(COBBuilder &builder, const std::filesystem::path &path) {
         start = end + 1;
     }
 #if FF_cob__binary
-    auto _ = emit_bin(builder);
+    auto _ = emitBin(builder);
 #endif
     return {};
 }

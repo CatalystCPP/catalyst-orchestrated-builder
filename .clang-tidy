@@ -21,6 +21,7 @@ Checks: >
   -readability-braces-around-statements,
   -readability-implicit-bool-conversion,
   -readability-identifier-length,
+  -readability-function-cognitive-complexity,
   -llvm-header-guard
 
 # Terminate if errors are found

@@ -4,7 +4,6 @@
 #include "cob/build_step.hpp"
 #include "cob/builder.hpp"
 #include "cob/graph.hpp"
-#include "cob/json.hpp"
 #include "cob/mpmc_queue.hpp"
 #include "cob/mpsc_queue.hpp"
 #include "cob/process_exec.hpp"
@@ -14,7 +13,6 @@
 #include <atomic>
 #include <cassert>
 #include <chrono>
-#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -25,10 +23,8 @@
 #include <fstream>
 #include <iostream>
 #include <liburing.h>
-#include <memory>
 #include <ostream>
 #include <print>
-#include <queue>
 #include <ranges>
 #include <string>
 #include <string_view>
@@ -36,6 +32,15 @@
 #include <thread>
 #include <unistd.h>
 #include <vector>
+
+inline constexpr size_t TUNABLE_PROGRESS_QUEUE_SZ = 8192Z;
+inline constexpr size_t TUNABLE_BUF_INIT_CAPACITY = 1 << 21; // 2MB
+inline constexpr size_t TUNABLE_FLUSH_THRESHOLD = 1 << 20;   // 1MB
+inline constexpr size_t TUNABLE_INPUT_SZ = 50Z;
+inline constexpr size_t TUNABLE_RSP_PATH_ESTIMATE = 100Z; // estimate on the size of a single RSP element path.
+#if FF_cob__heterogenous_core_affinity
+static constexpr size_t TUNABLE_HEAVY_THRESHOLD = 100;
+#endif
 
 namespace fs = std::filesystem;
 
@@ -73,15 +78,20 @@ inline std::string escapeJSONString(std::string_view s) {
             case '\t':
                 res.append("\\t");
                 break;
-            default:
-                if (static_cast<unsigned char>(c) < 0x20) {
-                    char buf[7];
-                    std::snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned char>(c));
-                    res.append(buf);
+            default: {
+                constexpr unsigned char ESCAPE_THRESHOLD = 0x20;
+                constexpr unsigned char MAX_SAFE_CHAR = 7;
+                const auto uc = static_cast<unsigned char>(c);
+                if (uc < ESCAPE_THRESHOLD) {
+                    std::array<char, MAX_SAFE_CHAR> buf{};
+                    auto [out, size] =
+                        std::format_to_n(buf.data(), buf.size(), "\\u{:04x}", static_cast<unsigned int>(uc));
+                    res.append(buf.data(), out - buf.data());
                 } else {
                     res.push_back(c);
                 }
                 break;
+            }
         }
     }
     res.push_back('"');
@@ -158,7 +168,7 @@ bool isNewer(const std::filesystem::path &new_file, const std::filesystem::path 
     return new_time > old_time;
 }
 
-Executor::Executor(COBBuilder &&builder, const ExecutorConfig &config) : builder(std::move(builder)), config(config) {
+Executor::Executor(COBBuilder &&builder, ExecutorConfig config) : builder(std::move(builder)), config(std::move(config)) {
 #if FF_cob__estimates
     estimator = std::make_unique<WorkEstimate>(config.estimates_file);
 #endif
@@ -203,11 +213,11 @@ inline uint64_t hashCommand(std::span<const std::string> args) {
 } // namespace
 
 [[clang::always_inline]]
-bool inline Executor::needs_rebuild(const BuildStep &step,
+bool inline Executor::needsRebuild(const BuildStep &step,
                                     StatCache &stat_cache,
                                     const ToolchainFlags &flags,
                                     uint64_t *out_hash) const {
-    std::vector<std::string> args = build_command_args(step, true, flags);
+    std::vector<std::string> args = buildCommandArgs(step, true, flags);
     uint64_t current_hash = hashCommand(std::span{args.data(), args.size()});
 
     if (out_hash) {
@@ -224,34 +234,34 @@ bool inline Executor::needs_rebuild(const BuildStep &step,
 
     fs::file_time_type output_modtime = std::filesystem::last_write_time(step.output);
 
-    if (stat_cache.changed_since(config.build_file, output_modtime)) {
+    if (stat_cache.changedSince(config.build_file, output_modtime)) {
         return true;
     }
 
     if (step.depfile_inputs.has_value()) {
         for (const std::string_view &dep : step.depfile_inputs) {
-            if (stat_cache.changed_since(std::filesystem::path(dep), output_modtime)) {
+            if (stat_cache.changedSince(std::filesystem::path(dep), output_modtime)) {
                 return true;
             }
         }
     }
     if (step.opaque_inputs.has_value()) {
         for (const std::string_view &opaque : step.opaque_inputs) {
-            if (stat_cache.changed_since(std::filesystem::path(opaque), output_modtime)) {
+            if (stat_cache.changedSince(std::filesystem::path(opaque), output_modtime)) {
                 return true;
             }
         }
     }
     // this is our way of making sure that the .d file isn't stale
     for (const std::string_view &input : step.parsed_inputs) {
-        if (stat_cache.changed_since(input, output_modtime)) {
+        if (stat_cache.changedSince(input, output_modtime)) {
             return true;
         }
     }
     return false;
 }
 
-Result<void> Executor::emit_graph() {
+Result<void> Executor::emitGraph() {
     catalyst::BuildGraph build_graph = builder.emit_graph();
     StatCache stat_cache;
 
@@ -283,7 +293,7 @@ Result<void> Executor::emit_graph() {
 
         if (node.step_id.has_value()) {
             const BuildStep &step = build_graph.steps()[*node.step_id];
-            if (needs_rebuild(step, stat_cache, tf)) {
+            if (needsRebuild(step, stat_cache, tf)) {
                 color = "green";
             } else {
                 color = "white";
@@ -300,7 +310,7 @@ Result<void> Executor::emit_graph() {
     return {};
 }
 
-Result<void> Executor::emit_compdb() {
+Result<void> Executor::emitCompDB() {
     catalyst::BuildGraph build_graph = builder.emit_graph();
     std::ofstream f("compile_commands.json");
     std::string cwd = std::filesystem::current_path().string();
@@ -324,7 +334,7 @@ Result<void> Executor::emit_compdb() {
                          .ldlibs = ldlibs_vec};
 
     std::string buf;
-    buf.reserve(1 << 21); // 2MB initial capacity
+    buf.reserve(TUNABLE_BUF_INIT_CAPACITY);
     buf.append("[\n");
     for (bool first = true; const BuildGraph::Node &node : build_graph.nodes()) {
         if (!node.step_id.has_value())
@@ -340,7 +350,7 @@ Result<void> Executor::emit_compdb() {
         first = false;
 
         const std::vector<std::string_view> &inputs = step.parsed_inputs;
-        std::vector<std::string> args = build_command_args(step, true, tf);
+        std::vector<std::string> args = buildCommandArgs(step, true, tf);
 
         buf.append("  {\n    \"directory\": ");
         buf.append(escapeJSONString(cwd));
@@ -361,7 +371,7 @@ Result<void> Executor::emit_compdb() {
         buf.append(escapeJSONString(step.output));
         buf.append("\n  }");
 
-        if (buf.size() > (1 << 20)) {
+        if (buf.size() > TUNABLE_FLUSH_THRESHOLD) {
             f.write(buf.data(), static_cast<long>(buf.size()));
             buf.clear();
         }
@@ -372,10 +382,10 @@ Result<void> Executor::emit_compdb() {
     return {};
 }
 
-Result<void> Executor::emit_commands() {
+Result<void> Executor::emitCommands() {
     catalyst::BuildGraph build_graph = builder.emit_graph();
     std::vector<size_t> order;
-    auto res = build_graph.topo_sort();
+    auto res = build_graph.topoSort();
     if (!res)
         return std::unexpected(res.error());
     order = *res;
@@ -403,7 +413,7 @@ Result<void> Executor::emit_commands() {
         if (!node.step_id.has_value())
             continue;
         const BuildStep &step = build_graph.steps()[*node.step_id];
-        std::vector<std::string> args = build_command_args(step, true, tf);
+        std::vector<std::string> args = buildCommandArgs(step, true, tf);
         for (size_t i = 0; i < args.size(); ++i) {
             std::cout << args[i] << (i == args.size() - 1 ? "" : " ");
         }
@@ -429,20 +439,15 @@ struct Executor::ExecuteContext {
     };
 
     LockFreeMPMCQueue<Task> ready_queue;
+    LockFreeMPSCQueue<LogEvent> progress_queue;
     std::atomic<size_t> tasks_available{0};
     std::atomic<size_t> sleeping_threads{0};
-
-    LockFreeMPSCQueue<LogEvent> progress_queue;
     std::atomic<size_t> messages_enqueued{0};
-
-    std::vector<std::atomic<int>> in_degrees;
-
     std::atomic<size_t> completed_count{0};
     std::atomic<size_t> steps_completed{0};
     size_t total_nodes{0};
     size_t steps_to_build{0};
-    std::atomic<bool> error_occurred{false};
-
+    std::vector<std::atomic<int>> in_degrees;
     const std::vector<std::string> cc_vec;
     const std::vector<std::string> cxx_vec;
     const std::vector<std::string> linker_vec;
@@ -451,8 +456,8 @@ struct Executor::ExecuteContext {
     const std::vector<std::string> cxxflags_vec;
     const std::vector<std::string> ldflags_vec;
     const std::vector<std::string> ldlibs_vec;
-
     catalyst::BuildGraph build_graph;
+    std::atomic<bool> error_occurred{false};
 
     ExecuteContext(size_t node_count,
                    std::vector<std::string> cc,
@@ -464,8 +469,8 @@ struct Executor::ExecuteContext {
                    std::vector<std::string> ldflags,
                    std::vector<std::string> ldlibs,
                    catalyst::BuildGraph bg)
-        : ready_queue(node_count), progress_queue(8192), in_degrees(node_count), total_nodes(node_count),
-          cc_vec(std::move(cc)), cxx_vec(std::move(cxx)), linker_vec(std::move(linker)),
+        : ready_queue(node_count), progress_queue(TUNABLE_PROGRESS_QUEUE_SZ), total_nodes(node_count),
+          in_degrees(node_count), cc_vec(std::move(cc)), cxx_vec(std::move(cxx)), linker_vec(std::move(linker)),
           archiver_vec(std::move(archiver)), cflags_vec(std::move(cflags)), cxxflags_vec(std::move(cxxflags)),
           ldflags_vec(std::move(ldflags)), ldlibs_vec(std::move(ldlibs)), build_graph(std::move(bg)) {
     }
@@ -484,7 +489,7 @@ struct Executor::ExecuteContext {
  * length limits.
  */
 std::vector<std::string>
-Executor::build_command_args(const BuildStep &step, bool dry_run_mode, const ToolchainFlags &flags) const {
+Executor::buildCommandArgs(const BuildStep &step, bool dry_run_mode, const ToolchainFlags &flags) const {
     std::vector<std::string> args;
     static constexpr size_t ARGS_VEC_INIT_SZ = 40Z;
     args.reserve(ARGS_VEC_INIT_SZ);
@@ -518,7 +523,6 @@ Executor::build_command_args(const BuildStep &step, bool dry_run_mode, const Too
         args.emplace_back(step.output);
     } else if (step.tool == "ld") {
         add_parts(flags.linker);
-        static constexpr size_t TUNABLE_INPUT_SZ = 50Z;
         std::filesystem::path rsp_path = std::filesystem::path(step.output).replace_extension(".rsp");
 
         bool use_rsp = false;
@@ -528,7 +532,6 @@ Executor::build_command_args(const BuildStep &step, bool dry_run_mode, const Too
             use_rsp = true;
             if (!dry_run_mode) {
                 std::string rsp_content;
-                constexpr size_t TUNABLE_RSP_PATH_ESTIMATE = 100Z; // estimate on the size of a single RSP element path.
                 rsp_content.reserve(inputs.size() * TUNABLE_RSP_PATH_ESTIMATE);
                 for (const std::string_view &input : inputs) {
                     rsp_content += input;
@@ -583,12 +586,18 @@ Executor::build_command_args(const BuildStep &step, bool dry_run_mode, const Too
  * If work estimates are enabled, calculates the estimate for the node and assigns it.
  * Utilizes the lock-free queue and notifies a sleeping worker thread via atomic wait primitives.
  */
-void Executor::push_ready(size_t idx, ExecuteContext &ctx) {
+#if FF_cob__estimates
+void Executor::push_ready(size_t idx, ExecuteContext &ctx, WorkEstimate *estimator) {
+#else
+void Executor::pushReady(size_t idx, ExecuteContext &ctx, [[maybe_unused]] void *estimator) {
+#endif
     size_t est = 0;
 #if FF_cob__estimates
-    const auto &node = ctx.build_graph.nodes()[idx];
-    if (node.step_id.has_value()) {
-        est = estimator->getWorkEstimate(ctx.build_graph.steps()[*node.step_id].output);
+    if (estimator) {
+        const auto &node = ctx.build_graph.nodes()[idx];
+        if (node.step_id.has_value()) {
+            est = estimator->getWorkEstimate(ctx.build_graph.steps()[*node.step_id].output);
+        }
     }
 #endif
 #ifdef DEBUG
@@ -606,7 +615,7 @@ void Executor::push_ready(size_t idx, ExecuteContext &ctx) {
  *
  * Uses terminal color codes if stdout is a TTY and updates the line dynamically.
  */
-void Executor::print_message(const BuildStep &step, ExecuteContext &ctx, bool is_tty) const {
+void Executor::printMessage(const BuildStep &step, ExecuteContext &ctx, bool is_tty) const {
     if (config.silent) {
         return;
     }
@@ -675,7 +684,7 @@ void Executor::print_message(const BuildStep &step, ExecuteContext &ctx, bool is
  * Verifies if the node requires rebuilding, generates its command, invokes the process
  * executor, and captures/logs output in a thread-safe manner. Returns 0 on success.
  */
-int Executor::process_step(size_t node_idx, ExecuteContext &ctx, StatCache &stat_cache, bool is_tty) const {
+int Executor::processStep(size_t node_idx, ExecuteContext &ctx, StatCache &stat_cache, bool is_tty) const {
     // NOLINTBEGIN(performance-avoid-endl)
     const BuildGraph::Node &node = ctx.build_graph.nodes()[node_idx];
     if (node.step_id.has_value()) {
@@ -691,12 +700,12 @@ int Executor::process_step(size_t node_idx, ExecuteContext &ctx, StatCache &stat
                              .ldlibs = ctx.ldlibs_vec};
 
         uint64_t step_hash = 0;
-        if (needs_rebuild(step, stat_cache, tf, &step_hash)) {
-            print_message(step, ctx, is_tty);
+        if (needsRebuild(step, stat_cache, tf, &step_hash)) {
+            printMessage(step, ctx, is_tty);
             if (config.dry_run)
                 return 0;
 
-            std::vector<std::string> args = build_command_args(step, false, tf);
+            std::vector<std::string> args = buildCommandArgs(step, false, tf);
 
 #if FF_cob__profiling
             auto start = std::chrono::steady_clock::now();
@@ -706,7 +715,7 @@ int Executor::process_step(size_t node_idx, ExecuteContext &ctx, StatCache &stat
 #else
             bool capture_output = false;
 #endif
-            auto res = catalyst::process_exec(std::move(args), std::nullopt, std::nullopt, capture_output);
+            auto res = catalyst::process_exec(args, std::nullopt, std::nullopt, capture_output);
 #if FF_cob__profiling
             auto end = std::chrono::steady_clock::now();
             std::chrono::duration<double> diff = end - start;
@@ -789,13 +798,9 @@ int Executor::process_step(size_t node_idx, ExecuteContext &ctx, StatCache &stat
  * Loops indefinitely retrieving tasks from the lock-free queue. Uses atomic futex waits
  * to sleep when the queue is empty. Implements deadlock detection to resolve stalled graphs.
  */
-void Executor::worker_loop(ExecuteContext &ctx, StatCache &stat_cache, bool is_tty, size_t thread_count) {
-#if FF_cob__heterogenous_core_affinity
-    static constexpr size_t TUNABLE_HEAVY_THRESHOLD = 100;
-#endif
-
+void Executor::workerLoop(ExecuteContext &ctx, StatCache &stat_cache, bool is_tty, size_t thread_count) {
     while (true) {
-        ExecuteContext::Task task;
+        ExecuteContext::Task task{};
         while (true) {
             if (ctx.ready_queue.dequeue(task)) {
                 ctx.tasks_available.fetch_sub(1, std::memory_order_relaxed);
@@ -841,7 +846,7 @@ void Executor::worker_loop(ExecuteContext &ctx, StatCache &stat_cache, bool is_t
         }
 #endif
 
-        int result = process_step(task.node_idx, ctx, stat_cache, is_tty);
+        int result = processStep(task.node_idx, ctx, stat_cache, is_tty);
 
 #if FF_cob__heterogenous_core_affinity
         setpriority(PRIO_PROCESS, 0, 0); // Reset to default
@@ -865,7 +870,11 @@ void Executor::worker_loop(ExecuteContext &ctx, StatCache &stat_cache, bool is_t
             const BuildGraph::Node &node = ctx.build_graph.nodes()[task.node_idx];
             for (size_t neighbor : node.out_edges) {
                 if (ctx.in_degrees[neighbor].fetch_sub(1, std::memory_order_acq_rel) == 1) {
-                    push_ready(neighbor, ctx);
+#if FF_cob__estimates
+                    push_ready(neighbor, ctx, estimator.get());
+#else
+                    pushReady(neighbor, ctx, nullptr);
+#endif
                 }
             }
             if (prev_completed + 1 == ctx.total_nodes) {
@@ -894,7 +903,7 @@ Result<void> Executor::execute() {
         return {};
 
     // Run topo_sort once up front to detect real cycles deterministically.
-    if (auto topo_res = build_graph.topo_sort(); !topo_res) {
+    if (auto topo_res = build_graph.topoSort(); !topo_res) {
         return std::unexpected(topo_res.error());
     }
 
@@ -903,7 +912,8 @@ Result<void> Executor::execute() {
     const auto linker_vec = builder.getLinkerVec(cxx_vec);
     const auto archiver_vec = builder.getArchiverVec();
 
-    ExecuteContext ctx(build_graph.nodes().size(),
+    const size_t total_nodes = build_graph.nodes().size();
+    ExecuteContext ctx(total_nodes,
                        cc_vec,
                        cxx_vec,
                        linker_vec,
@@ -981,7 +991,7 @@ Result<void> Executor::execute() {
         const BuildGraph::Node &node = ctx.build_graph.nodes()[i];
         if (node.step_id.has_value()) {
             const BuildStep &step = ctx.build_graph.steps()[*node.step_id];
-            if (needs_rebuild(step, stat_cache, tf)) {
+            if (needsRebuild(step, stat_cache, tf)) {
                 ctx.steps_to_build++;
             }
             if (node.out_edges.empty()) {
@@ -1041,14 +1051,15 @@ Result<void> Executor::execute() {
 
     for (size_t i = 0; i < thread_count; ++i) {
         pool.emplace_back([this, &ctx, &stat_cache, is_tty, thread_count]() {
-            this->worker_loop(ctx, stat_cache, is_tty, thread_count);
+            this->workerLoop(ctx, stat_cache, is_tty, thread_count);
         });
     }
 
     pool.clear(); // Join all worker threads
 
     // Signal progress thread to exit
-    while (!ctx.progress_queue.enqueue({"", "", false, true}))
+    while (!ctx.progress_queue.enqueue(
+        {.console_message = "", .log_message = "", .is_error = false, .is_poison_pill = true}))
         std::this_thread::yield();
     ctx.messages_enqueued.fetch_add(1, std::memory_order_release);
     ctx.messages_enqueued.notify_one();
@@ -1078,15 +1089,17 @@ Result<void> Executor::execute() {
         std::time_t now_time = std::chrono::system_clock::to_time_t(now);
         std::tm local_tm{};
         localtime_r(&now_time, &local_tm);
-        auto subsec_ns = epoch_ns % 1'000'000'000;
+        constexpr int64_t NS_PER_SEC = 1'000'000'000;
+        constexpr int TM_YEAR_BASE = 1900;
+        auto subsec_ns = epoch_ns % NS_PER_SEC;
         std::string timestamp = std::format("{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:09}",
-                                       local_tm.tm_year + 1900,
-                                       local_tm.tm_mon + 1,
-                                       local_tm.tm_mday,
-                                       local_tm.tm_hour,
-                                       local_tm.tm_min,
-                                       local_tm.tm_sec,
-                                       subsec_ns);
+                                            local_tm.tm_year + TM_YEAR_BASE,
+                                            local_tm.tm_mon + 1,
+                                            local_tm.tm_mday,
+                                            local_tm.tm_hour,
+                                            local_tm.tm_min,
+                                            local_tm.tm_sec,
+                                            subsec_ns);
         if (is_tty) {
             std::println("\r\033[K[{}] \033[32m[COB FINISHED: {}]\033[0m", timestamp, final_output_name);
         } else {
@@ -1096,7 +1109,7 @@ Result<void> Executor::execute() {
 
     if (!config.dry_run) {
         builder.graph_ = std::move(ctx.build_graph);
-        if (auto bin_res = emit_bin(builder); !bin_res) {
+        if (auto bin_res = emitBin(builder); !bin_res) {
             std::println(stderr, "Warning: Failed to write .catalyst.bin: {}", bin_res.error());
         }
     }

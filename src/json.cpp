@@ -1,3 +1,4 @@
+#if FF_cob__json_impl
 #include "cob/json.hpp"
 using catalyst::JSON;
 
@@ -112,3 +113,4 @@ JSON &JSON::operator=(std::vector<std::string> &&vec) {
     }
     return *this;
 }
+#endif

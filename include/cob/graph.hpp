@@ -6,7 +6,6 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
-#include <string>
 #include <string_view>
 #include "cob/flat_map.hpp"
 #include <vector>
@@ -33,7 +32,7 @@ public:
      * @param path The file path associated with the node.
      * @return The index of the node in the `nodes_` vector.
      */
-    size_t get_or_create_node(std::string_view path);
+    size_t getOrCreateNode(std::string_view path);
 
     /**
      * @brief Adds a new build step to the graph.
@@ -44,24 +43,24 @@ public:
      * @param step The build step to add.
      * @return The index of the added step, or an error if a producer for the output already exists.
      */
-    Result<size_t> add_step(BuildStep step);
+    Result<size_t> addStep(BuildStep step);
 
     /**
      * @brief Keeps a resource alive for the lifetime of the graph.
      * @param res A shared pointer to the resource (e.g., MappedFile).
      */
-    void add_resource(std::shared_ptr<void> res) {
-        resources_.push_back(std::move(res));
+    void addResource(std::shared_ptr<void> res) {
+        resources.push_back(std::move(res));
     }
 
-    const std::vector<Node> &nodes() const {
-        return nodes_;
+    [[nodiscard]] const std::vector<Node> &nodes() const {
+        return nodes_m;
     }
-    const std::vector<BuildStep> &steps() const {
-        return steps_;
+    [[nodiscard]] const std::vector<BuildStep> &steps() const {
+        return steps_m;
     }
     std::vector<BuildStep> &steps() {
-        return steps_;
+        return steps_m;
     }
 
     /**
@@ -69,7 +68,7 @@ public:
      * @return A vector of node indices in topological order (dependencies first),
      *         or an error if a cycle is detected.
      */
-    Result<std::vector<size_t>> topo_sort() const;
+    [[nodiscard]] Result<std::vector<size_t>> topoSort() const;
 
     struct SerializedData {
         std::vector<Node> nodes;
@@ -77,20 +76,22 @@ public:
         FlatHashMap<std::string_view, size_t, StringViewHash> index;
     };
 
-    void load_serialized_data(SerializedData &&data) {
-        nodes_ = std::move(data.nodes);
-        steps_ = std::move(data.steps);
-        index_ = std::move(data.index);
+    //NOLINTBEGIN(cppcoreguidelines-rvalue-reference-param-not-moved)
+    void loadSerializedData(SerializedData &&data) {
+        nodes_m = std::move(data.nodes);
+        steps_m = std::move(data.steps);
+        index = std::move(data.index);
     }
+    //NOLINTEND(cppcoreguidelines-rvalue-reference-param-not-moved)
 
     friend Result<void> parse(class COBBuilder &, const std::filesystem::path &);
 
 
 private:
-    std::vector<Node> nodes_;
-    std::vector<BuildStep> steps_;
-    FlatHashMap<std::string_view, size_t, StringViewHash> index_;
-    std::vector<std::shared_ptr<void>> resources_;
+    std::vector<Node> nodes_m;
+    std::vector<BuildStep> steps_m;
+    FlatHashMap<std::string_view, size_t, StringViewHash> index;
+    std::vector<std::shared_ptr<void>> resources;
 };
 
 } // namespace catalyst

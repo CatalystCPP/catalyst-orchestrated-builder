@@ -8,32 +8,32 @@ namespace catalyst {
 
 template <typename Key_T, typename Value_T, typename Hash_T>
 FlatHashMap<Key_T, Value_T, Hash_T>::FlatHashMap(size_t capacity) {
-    slots_.resize(std::bit_ceil(capacity == 0 ? 1UL : capacity));
+    slots.resize(std::bit_ceil(capacity == 0 ? 1UL : capacity));
 }
 
 template <typename Key_T, typename Value_T, typename Hash_T>
 Value_T* FlatHashMap<Key_T, Value_T, Hash_T>::insert(const Key_T& key, const Value_T& value) {
-    if (size_ >= slots_.size() * ROBIN_HOOD_LOAD_FACTOR) {
-        rehash(slots_.size() * 2);
+    if (size_m >= slots.size() * ROBIN_HOOD_LOAD_FACTOR) {
+        rehash(slots.size() * 2);
     }
-    return insert_helper(key, value);
+    return insertHelper(key, value);
 }
 
 template <typename Key_T, typename Value_T, typename Hash_T>
 Value_T* FlatHashMap<Key_T, Value_T, Hash_T>::find(const Key_T& key) {
-    if (slots_.empty()) return nullptr;
+    if (slots.empty()) return nullptr;
 
     size_t h = Hash_T{}(key);
-    size_t mask = slots_.size() - 1;
+    size_t mask = slots.size() - 1;
     size_t idx = h & mask;
     uint32_t dist = 1;
 
-    while (slots_[idx].probe_distance != 0) {
-        if (dist > slots_[idx].probe_distance) {
+    while (slots[idx].probe_distance != 0) {
+        if (dist > slots[idx].probe_distance) {
             return nullptr; // Robin Hood invariant: element is not here
         }
-        if (slots_[idx].key == key) {
-            return &slots_[idx].value;
+        if (slots[idx].key == key) {
+            return &slots[idx].value;
         }
         idx = (idx + 1) & mask;
         dist++;
@@ -43,19 +43,19 @@ Value_T* FlatHashMap<Key_T, Value_T, Hash_T>::find(const Key_T& key) {
 
 template <typename Key_T, typename Value_T, typename Hash_T>
 const Value_T* FlatHashMap<Key_T, Value_T, Hash_T>::find(const Key_T& key) const {
-    if (slots_.empty()) return nullptr;
+    if (slots.empty()) return nullptr;
 
     size_t h = Hash_T{}(key);
-    size_t mask = slots_.size() - 1;
+    size_t mask = slots.size() - 1;
     size_t idx = h & mask;
     uint32_t dist = 1;
 
-    while (slots_[idx].probe_distance != 0) {
-        if (dist > slots_[idx].probe_distance) {
+    while (slots[idx].probe_distance != 0) {
+        if (dist > slots[idx].probe_distance) {
             return nullptr; // Robin Hood invariant
         }
-        if (slots_[idx].key == key) {
-            return &slots_[idx].value;
+        if (slots[idx].key == key) {
+            return &slots[idx].value;
         }
         idx = (idx + 1) & mask;
         dist++;
@@ -65,16 +65,18 @@ const Value_T* FlatHashMap<Key_T, Value_T, Hash_T>::find(const Key_T& key) const
 
 template <typename Key_T, typename Value_T, typename Hash_T>
 void FlatHashMap<Key_T, Value_T, Hash_T>::reserve(size_t capacity) {
+//NOLINTBEGIN(cppcoreguidelines-narrowing-conversions,bugprone-narrowing-conversions)
     size_t needed = std::bit_ceil(static_cast<size_t>(capacity / ROBIN_HOOD_LOAD_FACTOR) + 1);
-    if (needed > slots_.size()) {
+//NOLINTEND(cppcoreguidelines-narrowing-conversions,bugprone-narrowing-conversions)
+    if (needed > slots.size()) {
         rehash(needed);
     }
 }
 
 template <typename Key_T, typename Value_T, typename Hash_T>
-Value_T* FlatHashMap<Key_T, Value_T, Hash_T>::insert_helper(Key_T key, Value_T value) {
+Value_T* FlatHashMap<Key_T, Value_T, Hash_T>::insertHelper(Key_T key, Value_T value) {
     size_t h = Hash_T{}(key);
-    size_t mask = slots_.size() - 1;
+    size_t mask = slots.size() - 1;
     size_t idx = h & mask;
 
     Key_T current_key = std::move(key);
@@ -83,14 +85,14 @@ Value_T* FlatHashMap<Key_T, Value_T, Hash_T>::insert_helper(Key_T key, Value_T v
     Value_T* inserted_ptr = nullptr;
 
     while (true) {
-        Slot& slot = slots_[idx];
+        Slot& slot = slots[idx];
 
         // Empty slot found
         if (slot.probe_distance == 0) {
             slot.key = std::move(current_key);
             slot.value = std::move(current_value);
             slot.probe_distance = current_dist;
-            size_++;
+            size_m++;
             if (!inserted_ptr) {
                 inserted_ptr = &slot.value;
             }
@@ -124,12 +126,12 @@ Value_T* FlatHashMap<Key_T, Value_T, Hash_T>::insert_helper(Key_T key, Value_T v
 
 template <typename Key_T, typename Value_T, typename Hash_T>
 void FlatHashMap<Key_T, Value_T, Hash_T>::rehash(size_t new_capacity) {
-    std::vector<Slot> old_slots = std::move(slots_);
-    slots_ = std::vector<Slot>(new_capacity);
-    size_ = 0;
+    std::vector<Slot> old_slots = std::move(slots);
+    slots = std::vector<Slot>(new_capacity);
+    size_m = 0;
     for (Slot& slot : old_slots) {
         if (slot.probe_distance != 0) {
-            insert_helper(std::move(slot.key), std::move(slot.value));
+            insertHelper(std::move(slot.key), std::move(slot.value));
         }
     }
 }

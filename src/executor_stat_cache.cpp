@@ -4,6 +4,7 @@
 #include <filesystem>
 using catalyst::StatCache;
 
+//NOLINTBEGIN(cppcoreguidelines-pro-bounds-constant-array-index)
 bool StatCache::Entry::operator<(const Entry &other) const {
     return path < other.path;
 }
@@ -11,9 +12,9 @@ bool StatCache::Entry::operator<(const std::filesystem::path &other_path) const 
     return path < other_path;
 }
 
-auto StatCache::get_or_update(const std::filesystem::path &p)
+auto StatCache::getOrUpdate(const std::filesystem::path &p)
     -> std::pair<std::filesystem::file_time_type, std::error_code> {
-    size_t idx = get_bucket_index(p);
+    size_t idx = getBucketIndex(p);
     Bucket &b = buckets[idx];
 
     // 1. Shared (read) lock for the fast path (cached hits)
@@ -38,15 +39,15 @@ auto StatCache::get_or_update(const std::filesystem::path &p)
     return {time, ec};
 }
 
-bool StatCache::changed_since(const std::filesystem::path &input, std::filesystem::file_time_type output_time) {
-    auto [input_time, ec] = get_or_update(input);
+bool StatCache::changedSince(const std::filesystem::path &input, std::filesystem::file_time_type output_time) {
+    auto [input_time, ec] = getOrUpdate(input);
     if (ec)
         return true;
     return input_time >= output_time;
 }
 
 void StatCache::invalidate(const std::filesystem::path &p) {
-    size_t idx = get_bucket_index(p);
+    size_t idx = getBucketIndex(p);
     Bucket &b = buckets[idx];
 
     std::lock_guard<std::shared_mutex> write_lock(b.mtx);
@@ -56,11 +57,14 @@ void StatCache::invalidate(const std::filesystem::path &p) {
     }
 }
 
-size_t StatCache::get_cache_size() const {
+size_t StatCache::getCacheSize() const {
     size_t total = 0;
     for (size_t i = 0; i < NUM_BUCKETS; ++i) {
+        //NOLINTBEGIN(cppcoreguidelines-pro-type-const-cast)
         std::shared_lock<std::shared_mutex> lock(const_cast<std::shared_mutex&>(buckets[i].mtx));
+        //NOLINTEND(cppcoreguidelines-pro-type-const-cast)
         total += buckets[i].entries.size();
     }
     return total;
 }
+//NOLINTEND(cppcoreguidelines-pro-bounds-constant-array-index)

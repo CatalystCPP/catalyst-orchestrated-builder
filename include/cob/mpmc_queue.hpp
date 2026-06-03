@@ -2,8 +2,8 @@
 
 #include <atomic>
 #include <bit>
-#include <memory>
 #include <cstddef>
+#include <memory>
 
 namespace catalyst {
 
@@ -12,8 +12,7 @@ namespace catalyst {
  * Based on Dmitry Vyukov's bounded MPMC queue algorithm.
  * Optimized with cacheline alignment to prevent false sharing.
  */
-template <typename T>
-class LockFreeMPMCQueue {
+template <typename Element_T> class LockFreeMPMCQueue {
 public:
     explicit LockFreeMPMCQueue(size_t capacity) {
         // Capacity must be a power of two for fast bitmask operations
@@ -32,8 +31,8 @@ public:
      * @param data The item to enqueue.
      * @return true if successful, false if the queue is full.
      */
-    bool enqueue(T const& data) {
-        Cell* cell;
+    bool enqueue(Element_T const &data) {
+        Cell *cell = cell;
         size_t pos = enqueue_pos_.load(std::memory_order_relaxed);
         while (true) {
             cell = &buffer_[pos & buffer_mask_];
@@ -59,8 +58,8 @@ public:
      * @param data Reference where the dequeued item will be stored.
      * @return true if successful, false if the queue is empty.
      */
-    bool dequeue(T& data) {
-        Cell* cell;
+    bool dequeue(Element_T &data) {
+        Cell *cell = cell;
         size_t pos = dequeue_pos_.load(std::memory_order_relaxed);
         while (true) {
             cell = &buffer_[pos & buffer_mask_];
@@ -86,7 +85,7 @@ private:
 
     struct alignas(CACHELINE_SIZE) Cell {
         std::atomic<size_t> sequence;
-        T data;
+        Element_T data;
     };
 
     alignas(CACHELINE_SIZE) std::unique_ptr<Cell[]> buffer_;
