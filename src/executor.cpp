@@ -216,7 +216,8 @@ inline uint64_t hashCommand(std::span<const std::string> args) {
 bool inline Executor::needsRebuild(const BuildStep &step,
                                     StatCache &stat_cache,
                                     const ToolchainFlags &flags,
-                                    uint64_t *out_hash) const {
+                                    uint64_t *out_hash,
+                                    std::vector<std::string> *out_args) const {
     std::vector<std::string> args = buildCommandArgs(step, true, flags);
     uint64_t current_hash = hashCommand(std::span{args.data(), args.size()});
 
@@ -225,22 +226,34 @@ bool inline Executor::needsRebuild(const BuildStep &step,
     }
 
     if (!std::filesystem::exists(step.output)) {
+        if (out_args) {
+            *out_args = std::move(args);
+        }
         return true;
     }
 
     if (step.command_hash != current_hash) {
+        if (out_args) {
+            *out_args = std::move(args);
+        }
         return true;
     }
 
     fs::file_time_type output_modtime = std::filesystem::last_write_time(step.output);
 
     if (stat_cache.changedSince(config.build_file, output_modtime)) {
+        if (out_args) {
+            *out_args = std::move(args);
+        }
         return true;
     }
 
     if (step.depfile_inputs.has_value()) {
         for (const std::string_view &dep : step.depfile_inputs) {
             if (stat_cache.changedSince(std::filesystem::path(dep), output_modtime)) {
+                if (out_args) {
+                    *out_args = std::move(args);
+                }
                 return true;
             }
         }
@@ -248,6 +261,9 @@ bool inline Executor::needsRebuild(const BuildStep &step,
     if (step.opaque_inputs.has_value()) {
         for (const std::string_view &opaque : step.opaque_inputs) {
             if (stat_cache.changedSince(std::filesystem::path(opaque), output_modtime)) {
+                if (out_args) {
+                    *out_args = std::move(args);
+                }
                 return true;
             }
         }
@@ -255,6 +271,9 @@ bool inline Executor::needsRebuild(const BuildStep &step,
     // this is our way of making sure that the .d file isn't stale
     for (const std::string_view &input : step.parsed_inputs) {
         if (stat_cache.changedSince(input, output_modtime)) {
+            if (out_args) {
+                *out_args = std::move(args);
+            }
             return true;
         }
     }
@@ -700,12 +719,15 @@ int Executor::processStep(size_t node_idx, ExecuteContext &ctx, StatCache &stat_
                              .ldlibs = ctx.ldlibs_vec};
 
         uint64_t step_hash = 0;
-        if (needsRebuild(step, stat_cache, tf, &step_hash)) {
+        std::vector<std::string> args;
+        if (needsRebuild(step, stat_cache, tf, &step_hash, &args)) {
             printMessage(step, ctx, is_tty);
             if (config.dry_run)
                 return 0;
 
-            std::vector<std::string> args = buildCommandArgs(step, false, tf);
+            if (step.tool == "ld") {
+                args = buildCommandArgs(step, false, tf);
+            }
 
 #if FF_cob__profiling
             auto start = std::chrono::steady_clock::now();

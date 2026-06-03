@@ -158,7 +158,8 @@ private:
     bool needsRebuild(const BuildStep &step,
                        StatCache &stat_cache,
                        const ToolchainFlags &flags,
-                       uint64_t *out_hash = nullptr) const;
+                       uint64_t *out_hash = nullptr,
+                       std::vector<std::string> *out_args = nullptr) const;
 
     [[nodiscard]] std::vector<std::string>
     buildCommandArgs(const BuildStep &step, bool dry_run_mode, const ToolchainFlags &flags) const;
