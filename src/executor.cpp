@@ -709,6 +709,12 @@ int Executor::processStep(size_t node_idx, ExecuteContext &ctx, StatCache &stat_
     if (node.step_id.has_value()) {
         BuildStep &step = ctx.build_graph.steps()[*node.step_id];
 
+#if FF_cob__logging
+        const bool start_progress = !config.silent || !config.build_log_file.empty();
+#else
+        const bool start_progress = !config.silent;
+#endif
+
         ToolchainFlags tf = {.cc = ctx.cc_vec,
                              .cxx = ctx.cxx_vec,
                              .linker = ctx.linker_vec,
@@ -743,10 +749,14 @@ int Executor::processStep(size_t node_idx, ExecuteContext &ctx, StatCache &stat_
             std::chrono::duration<double> diff = end - start;
             {
                 std::string msg = std::format("Step {} took {:.4f}s\n", step.output, diff.count());
-                while (!ctx.progress_queue.enqueue({msg, "", false, false}))
-                    std::this_thread::yield();
-                ctx.messages_enqueued.fetch_add(1, std::memory_order_release);
-                ctx.messages_enqueued.notify_one();
+                if (start_progress) {
+                    while (!ctx.progress_queue.enqueue({msg, "", false, false}))
+                        std::this_thread::yield();
+                    ctx.messages_enqueued.fetch_add(1, std::memory_order_release);
+                    ctx.messages_enqueued.notify_one();
+                } else {
+                    std::print("{}", msg);
+                }
             }
 #endif
 
@@ -778,11 +788,15 @@ int Executor::processStep(size_t node_idx, ExecuteContext &ctx, StatCache &stat_
                 if (ec != 0) {
                     std::string err_msg =
                         std::format("Build failed: {} -> {} (exit code {})\n", step.tool, step.output, ec);
-                    while (!ctx.progress_queue.enqueue(
-                        {.console_message = err_msg, .log_message = "", .is_error = true, .is_poison_pill = false}))
-                        std::this_thread::yield();
-                    ctx.messages_enqueued.fetch_add(1, std::memory_order_release);
-                    ctx.messages_enqueued.notify_one();
+                    if (start_progress) {
+                        while (!ctx.progress_queue.enqueue(
+                            {.console_message = err_msg, .log_message = "", .is_error = true, .is_poison_pill = false}))
+                            std::this_thread::yield();
+                        ctx.messages_enqueued.fetch_add(1, std::memory_order_release);
+                        ctx.messages_enqueued.notify_one();
+                    } else {
+                        std::print(stderr, "{}", err_msg);
+                    }
                     return ec;
                 }
                 // build succeeded, update the command hash for future up-to-date checks
@@ -792,21 +806,27 @@ int Executor::processStep(size_t node_idx, ExecuteContext &ctx, StatCache &stat_
                 stat_cache.invalidate(step.output);
             } else {
                 std::string err_msg = std::format("Failed to execute: {}\n", res.error());
-                while (!ctx.progress_queue.enqueue(
-                    {.console_message = err_msg, .log_message = "", .is_error = true, .is_poison_pill = false}))
-                    std::this_thread::yield();
-                ctx.messages_enqueued.fetch_add(1, std::memory_order_release);
-                ctx.messages_enqueued.notify_one();
+                if (start_progress) {
+                    while (!ctx.progress_queue.enqueue(
+                        {.console_message = err_msg, .log_message = "", .is_error = true, .is_poison_pill = false}))
+                        std::this_thread::yield();
+                    ctx.messages_enqueued.fetch_add(1, std::memory_order_release);
+                    ctx.messages_enqueued.notify_one();
+                } else {
+                    std::print(stderr, "{}", err_msg);
+                }
                 return 1;
             }
         }
 #if FF_cob__logging
         else {
             std::string msg = std::format("Skipping {} (up to date)\n", step.output);
-            while (!ctx.progress_queue.enqueue({msg, "", false, false}))
-                std::this_thread::yield();
-            ctx.messages_enqueued.fetch_add(1, std::memory_order_release);
-            ctx.messages_enqueued.notify_one();
+            if (start_progress) {
+                while (!ctx.progress_queue.enqueue({msg, "", false, false}))
+                    std::this_thread::yield();
+                ctx.messages_enqueued.fetch_add(1, std::memory_order_release);
+                ctx.messages_enqueued.notify_one();
+            }
         }
 #endif
     }
@@ -1019,48 +1039,60 @@ Result<void> Executor::execute() {
     if (thread_count == 0)
         thread_count = 1;
 
-    std::jthread progress_thread([&ctx
+    std::jthread progress_thread;
 #if FF_cob__logging
-                                  ,
-                                  log_file_ptr
+    const bool start_progress = !config.silent || !config.build_log_file.empty();
+#else
+    const bool start_progress = !config.silent;
 #endif
-    ]() {
-        size_t processed = 0;
-        while (true) {
-            size_t enqueued = ctx.messages_enqueued.load(std::memory_order_acquire);
-            while (processed == enqueued) {
-                ctx.messages_enqueued.wait(processed, std::memory_order_acquire);
-                enqueued = ctx.messages_enqueued.load(std::memory_order_acquire);
-            }
-
-            ExecuteContext::LogEvent ev;
-            while (!ctx.progress_queue.dequeue(ev)) {
-                std::this_thread::yield();
-            }
-            processed++;
-
-            if (ev.is_poison_pill) {
-                return;
-            }
-            if (ev.is_error) {
-                if (!ev.console_message.empty()) {
-                    std::print(stderr, "{}", ev.console_message);
-                    std::cerr.flush();
-                }
-            } else {
-                if (!ev.console_message.empty()) {
-                    std::print("{}", ev.console_message);
-                    std::cout.flush();
-                }
-            }
+    if (start_progress) {
+        progress_thread = std::jthread([&ctx, is_tty
 #if FF_cob__logging
-            if (!ev.log_message.empty() && log_file_ptr && log_file_ptr->is_open()) {
-                (*log_file_ptr) << ev.log_message;
-                log_file_ptr->flush();
-            }
+                                      ,
+                                      log_file_ptr
 #endif
-        }
-    });
+        ]() {
+            size_t processed = 0;
+            while (true) {
+                size_t enqueued = ctx.messages_enqueued.load(std::memory_order_acquire);
+                while (processed == enqueued) {
+                    ctx.messages_enqueued.wait(processed, std::memory_order_acquire);
+                    enqueued = ctx.messages_enqueued.load(std::memory_order_acquire);
+                }
+
+                ExecuteContext::LogEvent ev;
+                while (!ctx.progress_queue.dequeue(ev)) {
+                    std::this_thread::yield();
+                }
+                processed++;
+
+                if (ev.is_poison_pill) {
+                    return;
+                }
+                if (ev.is_error) {
+                    if (!ev.console_message.empty()) {
+                        std::print(stderr, "{}", ev.console_message);
+                        std::cerr.flush();
+                    }
+                } else {
+                    if (!ev.console_message.empty()) {
+                        std::print("{}", ev.console_message);
+                        if (is_tty) {
+                            std::cout.flush();
+                        }
+                    }
+                }
+#if FF_cob__logging
+                if (!ev.log_message.empty() && log_file_ptr && log_file_ptr->is_open()) {
+                    (*log_file_ptr) << ev.log_message;
+                    if (ev.is_error || is_tty) {
+                        log_file_ptr->flush();
+                    }
+                }
+#endif
+            }
+        });
+    }
 
     for (size_t i = 0; i < thread_count; ++i) {
         pool.emplace_back([this, &ctx, &stat_cache, is_tty, thread_count]() {
@@ -1071,12 +1103,14 @@ Result<void> Executor::execute() {
     pool.clear(); // Join all worker threads
 
     // Signal progress thread to exit
-    while (!ctx.progress_queue.enqueue(
-        {.console_message = "", .log_message = "", .is_error = false, .is_poison_pill = true}))
-        std::this_thread::yield();
-    ctx.messages_enqueued.fetch_add(1, std::memory_order_release);
-    ctx.messages_enqueued.notify_one();
-    progress_thread.join();
+    if (start_progress) {
+        while (!ctx.progress_queue.enqueue(
+            {.console_message = "", .log_message = "", .is_error = false, .is_poison_pill = true}))
+            std::this_thread::yield();
+        ctx.messages_enqueued.fetch_add(1, std::memory_order_release);
+        ctx.messages_enqueued.notify_one();
+        progress_thread.join();
+    }
 
     if (ctx.error_occurred) {
         if (!config.silent && is_tty && ctx.steps_completed > 0) {
