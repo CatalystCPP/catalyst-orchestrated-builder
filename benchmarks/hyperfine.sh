@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
-COB_PATH = /usr/bin/cob
-NINJA_PATH = /usr/bin/ninja
-MAKE_PATH = /usr/bin/make
+COB_PATH=/usr/bin/cob
+NINJA_PATH=/usr/bin/ninja
+MAKE_PATH=/usr/bin/make
 
 # Ensure we bail out if a command fails
 set -e
