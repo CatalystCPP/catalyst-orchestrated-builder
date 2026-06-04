@@ -168,7 +168,8 @@ bool isNewer(const std::filesystem::path &new_file, const std::filesystem::path 
     return new_time > old_time;
 }
 
-Executor::Executor(COBBuilder &&builder, ExecutorConfig config) : builder(std::move(builder)), config(std::move(config)) {
+Executor::Executor(COBBuilder &&builder, ExecutorConfig config)
+    : builder(std::move(builder)), config(std::move(config)) {
 #if FF_cob__estimates
     estimator = std::make_unique<WorkEstimate>(config.estimates_file);
 #endif
@@ -214,10 +215,10 @@ inline uint64_t hashCommand(std::span<const std::string> args) {
 
 [[clang::always_inline]]
 bool inline Executor::needsRebuild(const BuildStep &step,
-                                    StatCache &stat_cache,
-                                    const ToolchainFlags &flags,
-                                    uint64_t *out_hash,
-                                    std::vector<std::string> *out_args) const {
+                                   StatCache &stat_cache,
+                                   const ToolchainFlags &flags,
+                                   uint64_t *out_hash,
+                                   std::vector<std::string> *out_args) const {
     std::vector<std::string> args = buildCommandArgs(step, true, flags);
     uint64_t current_hash = hashCommand(std::span{args.data(), args.size()});
 
@@ -527,7 +528,8 @@ Executor::buildCommandArgs(const BuildStep &step, bool dry_run_mode, const Toolc
     if (step.tool == "cc") {
         add_parts(flags.cc);
         add_parts(flags.cflags);
-        args.insert(args.end(), {"-MMD", "-MT", std::string(step.output), "-MF", std::string(step.output) + ".d", "-c"});
+        args.insert(args.end(),
+                    {"-MMD", "-MT", std::string(step.output), "-MF", std::string(step.output) + ".d", "-c"});
         for (const std::string_view &in : inputs)
             args.emplace_back(in);
         args.emplace_back("-o");
@@ -535,7 +537,8 @@ Executor::buildCommandArgs(const BuildStep &step, bool dry_run_mode, const Toolc
     } else if (step.tool == "cxx") {
         add_parts(flags.cxx);
         add_parts(flags.cxxflags);
-        args.insert(args.end(), {"-MMD", "-MT", std::string(step.output), "-MF", std::string(step.output) + ".d", "-c"});
+        args.insert(args.end(),
+                    {"-MMD", "-MT", std::string(step.output), "-MF", std::string(step.output) + ".d", "-c"});
         for (const std::string_view &in : inputs)
             args.emplace_back(in);
         args.emplace_back("-o");
@@ -1046,10 +1049,11 @@ Result<void> Executor::execute() {
     const bool start_progress = !config.silent;
 #endif
     if (start_progress) {
-        progress_thread = std::jthread([&ctx, is_tty
+        progress_thread = std::jthread([&ctx,
+                                        is_tty
 #if FF_cob__logging
-                                      ,
-                                      log_file_ptr
+                                        ,
+                                        log_file_ptr
 #endif
         ]() {
             size_t processed = 0;
@@ -1138,15 +1142,19 @@ Result<void> Executor::execute() {
         localtime_r(&now_time, &local_tm);
         constexpr int64_t NS_PER_SEC = 1'000'000'000;
         constexpr int TM_YEAR_BASE = 1900;
+        constexpr size_t BUF_SIZE = 32;
         auto subsec_ns = epoch_ns % NS_PER_SEC;
-        std::string timestamp = std::format("{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:09}",
-                                            local_tm.tm_year + TM_YEAR_BASE,
-                                            local_tm.tm_mon + 1,
-                                            local_tm.tm_mday,
-                                            local_tm.tm_hour,
-                                            local_tm.tm_min,
-                                            local_tm.tm_sec,
-                                            subsec_ns);
+        std::array<char, BUF_SIZE> buf{}; // 29 needed; round up for future to avoid dynamic allocation
+        auto *end = std::format_to(buf.data(),
+                                   "{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:09}",
+                                   local_tm.tm_year + TM_YEAR_BASE,
+                                   local_tm.tm_mon + 1,
+                                   local_tm.tm_mday,
+                                   local_tm.tm_hour,
+                                   local_tm.tm_min,
+                                   local_tm.tm_sec,
+                                   subsec_ns);
+        std::string_view timestamp(buf.data(), end - buf.data());
         if (is_tty) {
             std::println("\r\033[K[{}] \033[32m[COB FINISHED: {}]\033[0m", timestamp, final_output_name);
         } else {
