@@ -4,6 +4,9 @@
 #include "cob/build_step.hpp"
 #include "cob/builder.hpp"
 #include "cob/graph.hpp"
+#if FF_cob__json_impl
+#include "cob/json.hpp"
+#endif
 #include "cob/mpmc_queue.hpp"
 #include "cob/mpsc_queue.hpp"
 #include "cob/process_exec.hpp"
@@ -609,7 +612,7 @@ Executor::buildCommandArgs(const BuildStep &step, bool dry_run_mode, const Toolc
  * Utilizes the lock-free queue and notifies a sleeping worker thread via atomic wait primitives.
  */
 #if FF_cob__estimates
-void Executor::push_ready(size_t idx, ExecuteContext &ctx, WorkEstimate *estimator) {
+void Executor::pushReady(size_t idx, ExecuteContext &ctx, WorkEstimate *estimator) {
 #else
 void Executor::pushReady(size_t idx, ExecuteContext &ctx, [[maybe_unused]] void *estimator) {
 #endif
@@ -916,7 +919,7 @@ void Executor::workerLoop(ExecuteContext &ctx, StatCache &stat_cache, bool is_tt
             for (size_t neighbor : node.out_edges) {
                 if (ctx.in_degrees[neighbor].fetch_sub(1, std::memory_order_acq_rel) == 1) {
 #if FF_cob__estimates
-                    push_ready(neighbor, ctx, estimator.get());
+                    pushReady(neighbor, ctx, estimator.get());
 #else
                     pushReady(neighbor, ctx, nullptr);
 #endif

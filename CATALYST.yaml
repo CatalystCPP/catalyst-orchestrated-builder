@@ -29,7 +29,7 @@ common:
     - logging: false
     - heterogenous_core_affinity: false
     - json_impl:
-        defualt: false
+        default: false
         files: [src/json.cpp, include/cob/json.hpp]
     - estimates:
         default: false
