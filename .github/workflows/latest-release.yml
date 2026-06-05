@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - main
+    paths:
+      - 'src/**'
+      - 'include/**'
+      - 'CATALYST.yaml'
   workflow_dispatch:
 
 permissions:
