@@ -1,0 +1,59 @@
+name: Latest Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: latest-release
+  cancel-in-progress: true
+
+jobs:
+  build-and-release:
+    name: Build and Release (Rolling)
+    runs-on: blacksmith-32vcpu-ubuntu-2404
+    permissions:
+      contents: write
+      packages: read
+    container:
+      image: ghcr.io/catalystcpp/catalyst-build-env:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Fetch dependencies
+        run: catalyst fetch --profiles common ccache release
+
+      - name: Build COB
+        run: catalyst build --profiles common ccache release
+
+      - name: Recreate & Upload Rolling Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # Delete existing release and tag named 'latest' (if it exists)
+          gh release delete latest --cleanup-tag -y || true
+
+          # Wait a moment for GitHub's backend to process the deletion
+          sleep 3
+
+          # Create a new prerelease with the 'latest' tag
+          gh release create latest \
+            --target ${{ github.sha }} \
+            --title "COB Development Build (Rolling)" \
+            --notes "Automated pre-release build tracking the head of the main branch. Created on $(date -u)." \
+            --prerelease
+
+          # Upload all packed artifacts (e.g. .deb, .rpm, .zip, .tar.gz) from build/pack/ and avoid build/pack/_CPack_Packages
+          find build/pack -maxdepth 1 -type f -exec gh release upload latest {} +
