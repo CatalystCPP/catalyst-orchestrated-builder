@@ -20,7 +20,7 @@ concurrency:
 jobs:
   build-and-release:
     name: Build and Release (Rolling)
-    runs-on: blacksmith-32vcpu-ubuntu-2404
+    runs-on: depot-ubuntu-24.04-16
     permissions:
       contents: write
       packages: read
