@@ -32,7 +32,7 @@ public:
      * @return true if successful, false if the queue is full.
      */
     bool enqueue(Element_T const &data) {
-        Cell *cell = cell;
+        Cell *cell = nullptr;
         size_t pos = enqueue_pos_.load(std::memory_order_relaxed);
         while (true) {
             cell = &buffer_[pos & buffer_mask_];
@@ -59,7 +59,7 @@ public:
      * @return true if successful, false if the queue is empty.
      */
     bool dequeue(Element_T &data) {
-        Cell *cell = cell;
+        Cell *cell = nullptr;
         size_t pos = dequeue_pos_.load(std::memory_order_relaxed);
         while (true) {
             cell = &buffer_[pos & buffer_mask_];

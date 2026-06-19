@@ -33,7 +33,7 @@ public:
      * @return true if successful, false if the queue is full.
      */
     bool enqueue(Value_T const& data) {
-        Cell* cell = cell;
+        Cell* cell = nullptr;
         size_t pos = enqueue_pos.load(std::memory_order_relaxed);
         while (true) {
             cell = &buffer[pos & buffer_mask];
@@ -60,7 +60,7 @@ public:
      * @return true if successful, false if the queue is empty.
      */
     bool dequeue(Value_T& data) {
-        Cell* cell = cell;
+        Cell* cell = nullptr;
         size_t pos = dequeue_pos;
         cell = &buffer[pos & buffer_mask];
         size_t seq = cell->sequence.load(std::memory_order_acquire);
