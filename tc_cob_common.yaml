@@ -1,0 +1,12 @@
+toolchain:
+  name: "cob default"
+  compiler:
+    c:
+      executable: "clang"
+    cxx:
+      executable: "clang++"
+      flags: "-std=c++23 -Wall -Wextra -O3"
+  linker:
+    executable: "clang++"
+  archiver:
+    executable: "ar"

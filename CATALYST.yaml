@@ -7,11 +7,7 @@ common:
     version: 0.6.0-dev
     description: The Catalyst Orchestrated Builder
     provides: cob
-    tooling:
-      CC: clang
-      CXX: clang++
-      CCFLAGS: ""
-      CXXFLAGS: -std=c++23 -Wall -Wextra -O3
+    toolchain: tc_cob_common.yaml
     dirs:
       include:
         - include
@@ -45,8 +41,7 @@ benchmark:
     name: cob_benchmark
     provides: cob_benchmark
     description: COB with Benchmarking Flags Enabled
-    tooling:
-      CXXFLAGS: -std=c++23 -Wall -Wextra -O0 -g -fno-omit-frame-pointer
+    toolchain: ./tc_cob_benchmark.yaml
 ccache:
   manifest:
     tooling:
@@ -54,14 +49,10 @@ ccache:
       CXX_LAUNCHER: ccache
 debug:
   manifest:
-    tooling:
-      CXXFLAGS: -std=c++23 -O0 -ggdb -Wall -Wextra -Wpedantic -Wshadow -DDEBUG
+    toolchain: ./tc_cob_debug.yaml
 release:
   manifest:
-    tooling:
-      CCFLAGS: -std=c++23 -O3 -Wall -Wextra -Wpedantic -Wshadow -DNDEBUG -march=native -flto=full -ffunction-sections -fdata-sections
-      CXXFLAGS: -std=c++23 -O3 -Wall -Wextra -Wpedantic -Wshadow -DNDEBUG -march=native -flto=full -ffunction-sections -fdata-sections
-      LDFLAGS: -static -fuse-ld=mold -flto=full -Wl,-O3 -Wl,--gc-sections -Wl,--icf=safe -Wl,--as-needed -Wl,--no-undefined -Wl,-z,relro,-z,now -Wl,--hash-style=gnu -Wl,--build-id=sha1 -Wl,--strip-all
+    toolchain: tc_cob_release.yaml
   hooks:
     post-build:
       - catalyst: pack -q -p common ccache release -a

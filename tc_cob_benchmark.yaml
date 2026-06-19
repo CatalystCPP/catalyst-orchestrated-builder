@@ -1,0 +1,6 @@
+toolchain:
+  extends: tc_cob_common.yaml
+  name: "cob benchmarks"
+  compiler:
+    cxx:
+      flags: -std=c++23 -Wall -Wextra -O0 -g -fno-omit-frame-pointer
