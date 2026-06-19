@@ -5,6 +5,8 @@
 #include "cob/file_handle.hpp"
 #include "cob/utility.hpp"
 
+#include <print>
+#include <iostream>
 #include <memory>
 #include <string_view>
 
@@ -58,7 +60,12 @@ Result<void> parse(COBBuilder &builder, const std::filesystem::path &path) {
 #if FF_cob__binary == 1
     if (std::filesystem::exists(".catalyst.bin") &&
         std::filesystem::last_write_time(".catalyst.bin") > std::filesystem::last_write_time(path)) {
-        return parseBin(builder);
+        if (auto res = parseBin(builder); !res) {
+            std::println(std::cerr, "Failed to parse binary (.catalyst.bin): {}", res.error());
+            std::println("Falling back to configuration.", res.error());
+        } else {
+            return {};
+        }
     }
 #endif
     std::string_view content;
