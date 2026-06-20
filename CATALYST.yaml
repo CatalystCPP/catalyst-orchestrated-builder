@@ -55,4 +55,4 @@ release:
     toolchain: tc_cob_release.yaml
   hooks:
     post-build:
-      - catalyst: pack -q -p common ccache release -a
+      - catalyst: pack -q -p common release -a
