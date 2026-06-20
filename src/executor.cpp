@@ -40,13 +40,13 @@ inline constexpr size_t TUNABLE_BUF_INIT_CAPACITY = 1 << 21; // 2MB
 inline constexpr size_t TUNABLE_FLUSH_THRESHOLD = 1 << 20;   // 1MB
 inline constexpr size_t TUNABLE_INPUT_SZ = 50Z;
 inline constexpr size_t TUNABLE_RSP_PATH_ESTIMATE = 100Z; // estimate on the size of a single RSP element path.
-#if FF_cob__heterogenous_core_affinity
+#if FF_COB__heterogeneous_core_affinity
 static constexpr size_t TUNABLE_HEAVY_THRESHOLD = 100;
 #endif
 
 namespace fs = std::filesystem;
 
-#if FF_cob__heterogenous_core_affinity
+#if FF_cob__heterogeneous_core_affinity
 #include <sys/resource.h>
 #endif
 
@@ -885,7 +885,7 @@ void Executor::workerLoop(ExecuteContext &ctx, StatCache &stat_cache, bool is_tt
             }
         }
 
-#if FF_cob__heterogenous_core_affinity
+#if FF_cob__heterogeneous_core_affinity
         if (task.estimate > TUNABLE_HEAVY_THRESHOLD) {
             setpriority(PRIO_PROCESS, 0, -5); // Hint: P-core
         } else {
@@ -895,7 +895,7 @@ void Executor::workerLoop(ExecuteContext &ctx, StatCache &stat_cache, bool is_tt
 
         int result = processStep(task.node_idx, ctx, stat_cache, is_tty);
 
-#if FF_cob__heterogenous_core_affinity
+#if FF_cob__heterogeneous_core_affinity
         setpriority(PRIO_PROCESS, 0, 0); // Reset to default
 #endif
 

@@ -23,7 +23,7 @@ common:
     - binary: true
     - profiling: false
     - logging: false
-    - heterogenous_core_affinity: false
+    - heterogeneous_core_affinity: false
     - json_impl:
         default: false
         files: [src/json.cpp, include/cob/json.hpp]
