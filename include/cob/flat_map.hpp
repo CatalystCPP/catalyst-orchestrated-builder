@@ -14,7 +14,7 @@ constexpr size_t MAP_INIITAL_CAPACITY = FF_cob__map_initial_capacity;
 
 struct StringViewHash {
     size_t operator()(std::string_view sv) const {
-        return static_cast<size_t>(fnv1a_hash(sv));
+        return static_cast<size_t>(rapid_hash(sv));
     }
 };
 

@@ -207,10 +207,10 @@ Result<void> Executor::clean() {
 namespace {
 [[clang::always_inline]]
 inline uint64_t hashCommand(std::span<const std::string> args) {
-    uint64_t hash = FNV_OFFSET_BASIS;
+    uint64_t hash = 0;
     for (const std::string &arg : args) {
-        hash = fnv1a_hash(arg, hash);
-        hash = fnv1a_hash(" ", hash);
+        hash = rapid_hash(arg, hash);
+        hash = rapid_hash(" ", hash);
     }
     return hash;
 }
