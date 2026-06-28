@@ -35,13 +35,14 @@
 #include <unistd.h>
 #include <vector>
 
-inline constexpr size_t TUNABLE_PROGRESS_QUEUE_SZ = 8192Z;
-inline constexpr size_t TUNABLE_BUF_INIT_CAPACITY = 1 << 21; // 2MB
-inline constexpr size_t TUNABLE_FLUSH_THRESHOLD = 1 << 20;   // 1MB
-inline constexpr size_t TUNABLE_INPUT_SZ = 50Z;
-inline constexpr size_t TUNABLE_RSP_PATH_ESTIMATE = 100Z; // estimate on the size of a single RSP element path.
-#if FF_COB__heterogeneous_core_affinity
-static constexpr size_t TUNABLE_HEAVY_THRESHOLD = 100;
+inline constexpr size_t PROGRESS_QUEUE_SZ = FF_cob__progress_queue_size;
+inline constexpr size_t BUF_INIT_CAPACITY = FF_cob__buffer_initial_capacity; // default: 2MB
+inline constexpr size_t FLUSH_THRESHOLD = FF_cob__flush_threshold;           // default: 1MB
+inline constexpr size_t RSP_INPUT_THRESHOLD = FF_cob__rsp_input_threshold;
+inline constexpr size_t RSP_LEN_ESTIMATE =
+    FF_cob__rsp_path_estimate; // estimate on the size of a single RSP element path.
+#if FF_cob__heterogeneous_core_affinity
+static constexpr size_t HEAVY_TASK_THRESHOLD = FF_cob__heavy_task_threshold;
 #endif
 
 namespace fs = std::filesystem;
@@ -356,7 +357,7 @@ Result<void> Executor::emitCompDB() {
                          .ldlibs = ldlibs_vec};
 
     std::string buf;
-    buf.reserve(TUNABLE_BUF_INIT_CAPACITY);
+    buf.reserve(BUF_INIT_CAPACITY);
     buf.append("[\n");
     for (bool first = true; const BuildGraph::Node &node : build_graph.nodes()) {
         if (!node.step_id.has_value())
@@ -393,7 +394,7 @@ Result<void> Executor::emitCompDB() {
         buf.append(escapeJSONString(step.output));
         buf.append("\n  }");
 
-        if (buf.size() > TUNABLE_FLUSH_THRESHOLD) {
+        if (buf.size() > FLUSH_THRESHOLD) {
             f.write(buf.data(), static_cast<long>(buf.size()));
             buf.clear();
         }
@@ -491,8 +492,8 @@ struct Executor::ExecuteContext {
                    std::vector<std::string> ldflags,
                    std::vector<std::string> ldlibs,
                    catalyst::BuildGraph bg)
-        : ready_queue(node_count), progress_queue(TUNABLE_PROGRESS_QUEUE_SZ), total_nodes(node_count),
-          in_degrees(node_count), cc_vec(std::move(cc)), cxx_vec(std::move(cxx)), linker_vec(std::move(linker)),
+        : ready_queue(node_count), progress_queue(PROGRESS_QUEUE_SZ), total_nodes(node_count), in_degrees(node_count),
+          cc_vec(std::move(cc)), cxx_vec(std::move(cxx)), linker_vec(std::move(linker)),
           archiver_vec(std::move(archiver)), cflags_vec(std::move(cflags)), cxxflags_vec(std::move(cxxflags)),
           ldflags_vec(std::move(ldflags)), ldlibs_vec(std::move(ldlibs)), build_graph(std::move(bg)) {
     }
@@ -552,11 +553,11 @@ Executor::buildCommandArgs(const BuildStep &step, bool dry_run_mode, const Toolc
         bool use_rsp = false;
         if (std::filesystem::exists(rsp_path) && isNewer(rsp_path, config.build_file)) {
             use_rsp = true;
-        } else if (inputs.size() > TUNABLE_INPUT_SZ) {
+        } else if (inputs.size() > RSP_INPUT_THRESHOLD) {
             use_rsp = true;
             if (!dry_run_mode) {
                 std::string rsp_content;
-                rsp_content.reserve(inputs.size() * TUNABLE_RSP_PATH_ESTIMATE);
+                rsp_content.reserve(inputs.size() * RSP_LEN_ESTIMATE);
                 for (const std::string_view &input : inputs) {
                     rsp_content += input;
                     rsp_content += '\n';
@@ -886,7 +887,7 @@ void Executor::workerLoop(ExecuteContext &ctx, StatCache &stat_cache, bool is_tt
         }
 
 #if FF_cob__heterogeneous_core_affinity
-        if (task.estimate > TUNABLE_HEAVY_THRESHOLD) {
+        if (task.estimate > HEAVY_TASK_THRESHOLD) {
             setpriority(PRIO_PROCESS, 0, -5); // Hint: P-core
         } else {
             setpriority(PRIO_PROCESS, 0, 5); // Hint: E-core
