@@ -55,7 +55,7 @@ bool rebuild_command_change_test() {
     {
         COBBuilder builder;
         std::cout << "[Run 2] parsing bin..." << std::endl;
-        auto parse_res = parse_bin(builder);
+        auto parse_res = parseBin(builder);
         if (!parse_res) {
             std::println(std::cerr, "Failed to parse .catalyst.bin in run 2: {}", parse_res.error());
             return false;
@@ -79,7 +79,7 @@ bool rebuild_command_change_test() {
     {
         COBBuilder builder;
         std::cout << "[Run 3] parsing bin..." << std::endl;
-        auto parse_res = parse_bin(builder);
+        auto parse_res = parseBin(builder);
         if (!parse_res) {
             std::println(std::cerr, "Failed to parse .catalyst.bin in run 3: {}", parse_res.error());
             return false;

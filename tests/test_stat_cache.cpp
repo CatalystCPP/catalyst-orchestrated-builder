@@ -30,7 +30,7 @@ bool stat_cache_test() {
     for (int i = 0; i < num_threads; ++i) {
         threads.emplace_back([&cache, &dummy_file]() {
             for (int j = 0; j < iterations; ++j) {
-                auto [time, ec] = cache.get_or_update(dummy_file);
+                auto [time, ec] = cache.getOrUpdate(dummy_file);
                 assert(!ec);
             }
         });
@@ -41,11 +41,11 @@ bool stat_cache_test() {
     }
 
     // Now inspect the cache size
-    std::cout << "Cache size after concurrent runs: " << cache.get_cache_size() << std::endl;
+    std::cout << "Cache size after concurrent runs: " << cache.getCacheSize() << std::endl;
 
     // The size of the cache MUST be exactly 1, because we only queried one unique file!
     // If there is a check-then-act race, duplicates would have been inserted, making size > 1.
-    assert(cache.get_cache_size() == 1);
+    assert(cache.getCacheSize() == 1);
 
     // Clean up
     std::filesystem::remove(dummy_file);
