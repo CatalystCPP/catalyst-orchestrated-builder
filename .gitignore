@@ -17,3 +17,4 @@ report.fls
 report.log
 report.out
 benchmarks/cobr*
+.catalyst.logs
