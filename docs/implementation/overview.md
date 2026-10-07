@@ -18,8 +18,20 @@ COB tracks implicit dependencies, such as files included by ``#include`` ``/#inc
 This instructs the compiler (GCC/Clang) to emit a Make-compatible dependency file alongside the object file for the
 next build.
 2.  Discovery: On the next pass, during graph construction, COB checks for the existence of these `.d` files from the previous build.
-3.  Parsing: COB reads the `.d` file and extracts every input into the build graph.
+3.  Parsing: COB reads the prerequisites of the first logical rule in the `.d` file.
 4.  Graph augmentation: These discovered prerequisites are added as nodes in the build graph, with edges pointing to the object file.
+
+The parser handles LF and CRLF line continuations, multiple targets, and Make-quoted
+spaces, tabs, `#`, and doubled dollar signs (`$$`). Backslashes before ordinary
+characters remain literal. Target drive prefixes and escaped target colons do not
+end the target list. Later rules, including the empty phony rules emitted by
+`-MP`, are ignored rather than mistaken for input filenames. This is a parser for
+compiler-generated depfiles, not a general Makefile interpreter.
+
+Ordinary paths remain zero-copy views into the mapped depfile. Decoded paths are
+owned by the graph and survive graph moves and binary-cache round trips. Binary
+cache revision `005` invalidates older graphs that may contain incorrectly parsed
+paths; COB automatically falls back to the text manifest for those caches.
 
 ### Staleness Check
 
