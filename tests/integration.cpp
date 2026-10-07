@@ -16,8 +16,116 @@
 #include <iostream>
 #include <print>
 #include <sstream>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 using namespace catalyst;
+
+namespace catalyst {
+namespace {
+
+bool depfileParsingTest() {
+    struct DepfileCase {
+        std::string_view name;
+        std::string_view content;
+        std::vector<std::string_view> expected;
+    };
+
+    const std::vector<DepfileCase> cases = {
+        {"ordinary paths", "out.o: source.c include/header.h\n", {"source.c", "include/header.h"}},
+        {"LF continuation", "out.o: source.c \\\n header.h\n", {"source.c", "header.h"}},
+        {"CRLF continuation", "out.o: source.c \\\r\n\theader.h\r\n", {"source.c", "header.h"}},
+        {"no final newline", "out.o: source.c header.h", {"source.c", "header.h"}},
+        {"escaped whitespace",
+         "out.o: source.c space\\ name.h tab\\\tname.h\n",
+         {"source.c", "space name.h", "tab\tname.h"}},
+        {"Make quoting", "out.o: hash\\#name.h dollar$$name.h\n", {"hash#name.h", "dollar$name.h"}},
+        {"literal backslashes", R"(out.o: path\name.h path\\name.h)", {R"(path\name.h)", R"(path\\name.h)"}},
+        {"backslash before space", R"(out.o: path\\\ name.h)", {R"(path\ name.h)"}},
+        {"backslash before hash", R"(out.o: path\\#name.h path\\\#name.h)", {R"(path\#name.h)", R"(path\\#name.h)"}},
+        {"dangling backslash", "out.o: trailing\\", {"trailing\\"}},
+        {"phony rules", "out.o: source.c header.h\nheader.h:\n", {"source.c", "header.h"}},
+        {"unrelated rules", "out.o: source.c\nother.o: unrelated.c\n", {"source.c"}},
+        {"comment", "out.o: source.c # ignored.h\n", {"source.c"}},
+        {"adjacent comment", "out.o: header.h# ignored.h\n", {"header.h"}},
+        {"multiple targets", "out.o out.d: source.c\n", {"source.c"}},
+        {"continued targets", "out.o \\\n out.d: source.c\n", {"source.c"}},
+        {"escaped target whitespace", R"(out\ name.o: source.c)", {"source.c"}},
+        {"literal dollar", "out.o: dollar$name.h dollars$$$$.h", {"dollar$name.h", "dollars$$.h"}},
+        {"escaped target colon", R"(out\:name.o: source.c)", {"source.c"}},
+        {"drive prefixes",
+         R"(C:\obj\out.o: C:\src\source.c D:/include/header.h)",
+         {R"(C:\src\source.c)", "D:/include/header.h"}},
+        {"absolute input without space", "out.o:/src/source.c", {"/src/source.c"}},
+        {"empty rule", "out.o:\nheader.h:\n", {}},
+        {"empty file", "", {}},
+        {"missing separator", "source.c header.h\n", {}},
+    };
+
+    for (const auto &test : cases) {
+        {
+            std::ofstream depfile("depfile_test.o.d", std::ios::binary);
+            depfile << test.content;
+            depfile.close();
+            if (!depfile) {
+                std::println(std::cerr, "Cannot write depfile fixture: {}", test.name);
+                return false;
+            }
+        }
+
+        COBBuilder builder;
+        BuildStep step;
+        step.tool = "cc";
+        step.output = "depfile_test.o";
+        auto result = builder.addStep(std::move(step));
+        std::filesystem::remove("depfile_test.o.d");
+        if (!result) {
+            std::println(std::cerr, "Cannot add depfile test step: {}", result.error());
+            return false;
+        }
+
+        // Serialized graphs must retain decoded paths, not Make spelling.
+        if (auto emitted = emitBin(builder); !emitted) {
+            std::println(std::cerr, "Cannot cache depfile test graph: {}", emitted.error());
+            return false;
+        }
+        COBBuilder cached_builder;
+        auto parsed = parseBin(cached_builder);
+        std::filesystem::remove(".catalyst.bin");
+        if (!parsed || !std::ranges::equal(cached_builder.graph().steps().front().depfile_inputs, test.expected)) {
+            std::println(std::cerr, "Depfile cache round trip failed: {}", test.name);
+            return false;
+        }
+
+        // Views into both mapped and decoded paths must survive a graph move.
+        BuildGraph moved_graph = builder.emitGraph();
+        const auto &inputs = moved_graph.steps().front().depfile_inputs;
+        if (!std::ranges::equal(inputs, test.expected)) {
+            std::println(std::cerr, "Depfile parsing failed: {}", test.name);
+            for (auto input : inputs) {
+                std::println(std::cerr, "  actual: [{}]", input);
+            }
+            return false;
+        }
+        if (!moved_graph.topoSort()) {
+            std::println(std::cerr, "Depfile introduced a cycle: {}", test.name);
+            return false;
+        }
+        for (auto input : test.expected) {
+            auto node = std::ranges::find(moved_graph.nodes(), input, &BuildGraph::Node::path);
+            if (node == moved_graph.nodes().end() || node->out_edges.size() != 1) {
+                std::println(std::cerr, "Missing dependency edge: {} ({})", input, test.name);
+                return false;
+            }
+        }
+    }
+    std::println("Depfile Parsing Test passed ({} cases)!", cases.size());
+    return true;
+}
+
+} // namespace
+} // namespace catalyst
 
 bool rebuild_command_change_test() {
     std::println("Starting Command-Line/Flag Change Rebuild Test...");
@@ -315,6 +423,10 @@ bool sharedLinkFlagsTest() {
 }
 
 bool integration_test() {
+    if (!catalyst::depfileParsingTest()) {
+        return false;
+    }
+
     // Setup
     std::println("Starting Integration Test...");
     create_dummy_file("catalyst.build");

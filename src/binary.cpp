@@ -96,7 +96,9 @@ constexpr std::string_view MAGIC = "CATB"
 #elif defined(_WIN32) || defined(_WIN64)
                                    "W"
 #endif
-                                   "004";
+                                   // Revision 005 invalidates graphs with undecoded depfile paths
+                                   // or phony targets incorrectly stored as prerequisites.
+                                   "005";
 
 class StringBuffer {
 public:

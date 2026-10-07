@@ -9,9 +9,10 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <cstring>
 #include <filesystem>
 #include <format>
+#include <memory>
+#include <string>
 #include <string_view>
 
 namespace fs = std::filesystem;
@@ -30,13 +31,16 @@ size_t BuildGraph::getOrCreateNode(std::string_view path) {
 }
 
 namespace {
-// Helper to skip whitespace and handle line continuations
+// Skip horizontal whitespace and continuations, but never cross a rule boundary.
 const char *skipWhitespace(const char *ptr, const char *end) {
     while (ptr < end) {
         unsigned char c = *ptr;
         if (c > ' ' && c != '\\')
             break;
 
+        if (c == '\n' || c == '\r') {
+            break;
+        }
         if (c <= ' ') {
             ptr++;
         } else if (c == '\\') {
@@ -59,7 +63,7 @@ const char *extractToken(const char *ptr, const char *end, std::string_view &out
     const char *start = ptr;
     while (ptr < end) {
         unsigned char c = *ptr;
-        if (c <= ' ' || c == '\\')
+        if (c <= ' ' || c == '\\' || c == '#')
             break;
         ptr++;
     }
@@ -68,15 +72,26 @@ const char *extractToken(const char *ptr, const char *end, std::string_view &out
     if (ptr < end && *ptr == '\\') {
         while (ptr < end) {
             if (*ptr == '\\') {
-                if (ptr + 1 >= end) {
-                    ptr++; // Dangling backslash
+                const char *slash_start = ptr;
+                while (ptr < end && *ptr == '\\') {
+                    ++ptr;
+                }
+                if (ptr == end) {
                     break;
                 }
-                if (ptr[1] == '\n' || ptr[1] == '\r') {
-                    break; // Line continuation means end of token
+                const bool odd_slashes = (ptr - slash_start) % 2 != 0;
+                if (*ptr == '\n' || *ptr == '\r') {
+                    if (odd_slashes) {
+                        --ptr; // Leave the continuation for skipWhitespace.
+                    }
+                    break;
                 }
-                ptr += 2; // Skip escaped char
-            } else if (static_cast<unsigned char>(*ptr) <= ' ') {
+                // GCC quotes '#' with one extra backslash, unlike whitespace,
+                // which doubles preceding backslashes before adding its escape.
+                if (*ptr == '#' || (odd_slashes && (*ptr == ' ' || *ptr == '\t'))) {
+                    ++ptr;
+                }
+            } else if (static_cast<unsigned char>(*ptr) <= ' ' || *ptr == '#') {
                 break; // Unescaped whitespace ends token
             } else {
                 ptr++;
@@ -87,13 +102,50 @@ const char *extractToken(const char *ptr, const char *end, std::string_view &out
     out_token = std::string_view(start, ptr - start);
     return ptr;
 }
-} // namespace
+
+// Make quoting is not shell quoting: backslashes before ordinary characters
+// are literal, and a dollar is represented by two dollars.
+std::string_view decodeDepfileToken(BuildGraph &graph, std::string_view token) {
+    if (token.find_first_of("\\$") == std::string_view::npos) {
+        return token;
+    }
+
+    auto decoded = std::make_shared<std::string>();
+    decoded->reserve(token.size());
+    for (size_t i = 0; i < token.size();) {
+        if (token[i] == '$' && i + 1 < token.size() && token[i + 1] == '$') {
+            decoded->push_back('$');
+            i += 2;
+        } else if (token[i] == '\\') {
+            size_t start = i;
+            while (i < token.size() && token[i] == '\\') {
+                ++i;
+            }
+            size_t count = i - start;
+            if (i < token.size() && token[i] == '#') {
+                decoded->append(count - 1, '\\');
+                decoded->push_back(token[i++]);
+            } else if (i < token.size() && (token[i] == ' ' || token[i] == '\t')) {
+                decoded->append(count / 2, '\\');
+                decoded->push_back(token[i++]);
+            } else {
+                decoded->append(count, '\\');
+            }
+        } else {
+            decoded->push_back(token[i++]);
+        }
+    }
+    std::string_view result = *decoded;
+    graph.addResource(std::move(decoded));
+    return result;
+}
 
 /**
- * @brief Parses a Makefile-style dependency file (.d).
+ * @brief Parses the first logical rule of a compiler-generated dependency file (.d).
  *
- * This parser handles line continuations (\) and escaped spaces.
- * It invokes the callback for each dependency found.
+ * Handles LF/CRLF continuations and Make-quoted spaces, tabs, hashes, and dollars.
+ * Later rules (including -MP phony targets) are not prerequisites of this output.
+ * Ordinary tokens reference the mapping; decoded tokens are owned by the graph.
  *
  * @param graph The build graph (used to keep the memory mapped file alive).
  * @param path The path to the dependency file.
@@ -113,26 +165,47 @@ void parseDepfile(BuildGraph &graph, const std::filesystem::path &path, auto cal
     const char *ptr = content.data();
     const char *end = ptr + content.size();
 
-    // 1. Skip to deps, ignoring final output
-    const char *colon = static_cast<const char *>(std::memchr(ptr, ':', end - ptr));
-    if (!colon)
-        return;
-    ptr = colon + 1;
+    // Find the target separator, skipping escaped colons and drive prefixes.
+    const char *target_start = ptr;
+    while (ptr < end) {
+        if (*ptr == '\n' || *ptr == '\r' || *ptr == '#') {
+            return;
+        }
+        if (*ptr == '\\' && ptr + 1 < end) {
+            ++ptr;
+            if (*ptr == '\r' && ptr + 1 < end && ptr[1] == '\n') {
+                ++ptr;
+            }
+            ++ptr;
+        } else if (*ptr == ':') {
+            const bool drive_prefix = ptr == target_start + 1 && ptr + 1 < end && (ptr[1] == '/' || ptr[1] == '\\');
+            ++ptr;
+            if (!drive_prefix) {
+                break;
+            }
+        } else {
+            if (*ptr == ' ' || *ptr == '\t') {
+                target_start = ptr + 1;
+            }
+            ++ptr;
+        }
+    }
 
     // Main parsing loop
     while (ptr < end) {
         ptr = skipWhitespace(ptr, end);
-        if (ptr >= end)
+        if (ptr >= end || *ptr == '\n' || *ptr == '\r' || *ptr == '#')
             break;
 
         std::string_view token;
         ptr = extractToken(ptr, end, token);
 
         if (!token.empty()) {
-            callback(token);
+            callback(decodeDepfileToken(graph, token));
         }
     }
 }
+} // namespace
 
 Result<size_t> BuildGraph::addStep(BuildStep step) {
     size_t out_id = getOrCreateNode(step.output);
