@@ -350,13 +350,16 @@ public:
                 continue;
             }
             const SourceSummary &time = sources[i];
+            if (time.missing) {
+                for (size_t out : node.out_edges) {
+                    sources[out].missing = true;
+                    sources[out].any = true;
+                }
+                continue;
+            }
             for (size_t out : node.out_edges) {
                 SourceSummary &summary = sources[out];
-                if (time.missing) {
-                    summary.missing = true;
-                } else if (!summary.any || time.newest > summary.newest) {
-                    summary.newest = time.newest;
-                }
+                summary.newest = std::max(summary.newest, time.newest);
                 summary.any = true;
             }
         }
@@ -428,7 +431,7 @@ private:
 
     /** @brief For a source node, its own time; for any other node, the newest of its source inputs. */
     struct SourceSummary {
-        fs::file_time_type newest;
+        fs::file_time_type newest = fs::file_time_type::min();
         bool missing = false;
         bool any = false;
     };
@@ -763,6 +766,7 @@ struct Executor::ExecuteContext {
     std::atomic<bool> hashes_changed{false}; ///< Whether the graph differs from the loaded cache.
 
     ExecuteContext(size_t node_count,
+                   size_t progress_capacity,
                    std::vector<std::string> cc,
                    std::vector<std::string> cxx,
                    std::vector<std::string> linker,
@@ -772,7 +776,7 @@ struct Executor::ExecuteContext {
                    std::vector<std::string> ldflags,
                    std::vector<std::string> ldlibs,
                    catalyst::BuildGraph bg)
-        : ready_queue(node_count), progress_queue(PROGRESS_QUEUE_SZ), total_nodes(node_count), in_degrees(node_count),
+        : ready_queue(node_count), progress_queue(progress_capacity), total_nodes(node_count), in_degrees(node_count),
           cc_vec(std::move(cc)), cxx_vec(std::move(cxx)), linker_vec(std::move(linker)),
           archiver_vec(std::move(archiver)), cflags_vec(std::move(cflags)), cxxflags_vec(std::move(cxxflags)),
           ldflags_vec(std::move(ldflags)), ldlibs_vec(std::move(ldlibs)), build_graph(std::move(bg)) {
@@ -1306,7 +1310,14 @@ Result<void> Executor::execute() {
     const auto archiver_vec = builder.getArchiverVec();
 
     const size_t total_nodes = build_graph.nodes().size();
+#if FF_cob__logging
+    const bool start_progress = !config.silent || !config.build_log_file.empty();
+#else
+    const bool start_progress = !config.silent;
+#endif
+    // Without a progress thread nothing is ever enqueued, so skip constructing the full queue.
     ExecuteContext ctx(total_nodes,
+                       start_progress ? PROGRESS_QUEUE_SZ : 1,
                        cc_vec,
                        cxx_vec,
                        linker_vec,
@@ -1380,11 +1391,6 @@ Result<void> Executor::execute() {
     }
 
     std::jthread progress_thread;
-#if FF_cob__logging
-    const bool start_progress = !config.silent || !config.build_log_file.empty();
-#else
-    const bool start_progress = !config.silent;
-#endif
     if (start_progress) {
         progress_thread = std::jthread([&ctx,
                                         is_tty
@@ -1436,6 +1442,10 @@ Result<void> Executor::execute() {
     }
 
     for (size_t i = 0; i < thread_count; ++i) {
+        // Workers that are already running exit once everything completed, so later ones would be idle.
+        if (ctx.completed_count.load(std::memory_order_acquire) == ctx.total_nodes) {
+            break;
+        }
         pool.emplace_back([this, &ctx, &node_times, is_tty, thread_count]() {
             this->workerLoop(ctx, node_times, is_tty, thread_count);
         });
