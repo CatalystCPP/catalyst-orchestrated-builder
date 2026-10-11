@@ -66,6 +66,8 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
+#include <cstdlib>
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
@@ -75,6 +77,7 @@
 #include <limits>
 #include <memory>
 #include <string_view>
+#include <tuple>
 #include <vector>
 
 #ifdef __linux__
@@ -118,9 +121,81 @@ public:
         return buffer_data;
     }
 
+    void reserve(size_t strings) {
+        buffer_cache.reserve(strings);
+    }
+
 private:
     std::string buffer_data;
     FlatHashMap<std::string_view, StringRef, StringViewHash> buffer_cache;
+};
+
+/**
+ * @brief Pool references keyed by string address rather than content.
+ *
+ * Depfile inputs view the same bytes as their node's path (both in graphs loaded from a cache and in graphs
+ * built from depfiles), so most lookups resolve by address without hashing or comparing contents.
+ */
+class AddressCache {
+public:
+    explicit AddressCache(size_t capacity) : slots(std::bit_ceil((capacity * 2) + 2)) {
+        shift = std::numeric_limits<uint64_t>::digits - std::countr_zero(slots.size());
+    }
+
+    /** @brief Remembers the reference of a string that was added to the pool. Ignored when full. */
+    void insert(std::string_view sv, StringRef ref) {
+        if (sv.data() == nullptr || used + 1 >= slots.size() / 2) {
+            return;
+        }
+        for (size_t idx = index(sv.data());; idx = (idx + 1) & (slots.size() - 1)) {
+            Slot &slot = slots[idx];
+            if (slot.data == nullptr) {
+                slot = {.data = sv.data(), .size = sv.size(), .ref = ref};
+                ++used;
+                return;
+            }
+            if (slot.data == sv.data() && slot.size == sv.size()) {
+                return;
+            }
+        }
+    }
+
+    [[nodiscard]] const StringRef *find(std::string_view sv) const {
+        if (sv.data() == nullptr) {
+            return nullptr;
+        }
+        for (size_t idx = index(sv.data());; idx = (idx + 1) & (slots.size() - 1)) {
+            const Slot &slot = slots[idx];
+            if (slot.data == nullptr) {
+                return nullptr;
+            }
+            if (slot.data == sv.data() && slot.size == sv.size()) {
+                return &slot.ref;
+            }
+        }
+    }
+
+private:
+    struct Slot {
+        const char *data = nullptr;
+        size_t size = 0;
+        StringRef ref{};
+    };
+
+    [[nodiscard]] size_t index(const char *data) const {
+        constexpr uint64_t FIBONACCI_MULTIPLIER = 0x9E3779B97F4A7C15ULL;
+        return static_cast<size_t>((reinterpret_cast<uintptr_t>(data) * FIBONACCI_MULTIPLIER) >> shift);
+    }
+
+    std::vector<Slot> slots;
+    size_t used = 0;
+    int shift = 0;
+};
+
+struct FreeDeleter {
+    void operator()(char *ptr) const noexcept {
+        std::free(ptr); // NOLINT(cppcoreguidelines-no-malloc, cppcoreguidelines-owning-memory)
+    }
 };
 
 struct BinHeader {
@@ -421,100 +496,94 @@ Result<void> parseBin(COBBuilder &builder) {
 }
 
 Result<void> emitBin(COBBuilder &builder) {
-    StringBuffer sb;
-    std::vector<char> payload;
     const Definitions &definitions = builder.definitions();
     const std::vector<BuildGraph::Node> &nodes = builder.graph().nodes();
     const std::vector<BuildStep> &steps = builder.graph().steps();
 
-    auto emit_definitions = [&sb, &payload, &definitions]() -> void {
-        for (const auto &[k, v] : definitions) {
-            BinDefinition definition{.key = sb.add(k), .val = sb.add(v)};
-            payload.insert(payload.end(),
-                           reinterpret_cast<const char *>(&definition),
-                           reinterpret_cast<const char *>(&definition) + sizeof(BinDefinition));
-        }
-    };
-
-    auto emit_nodes = [&sb, &payload, &nodes]() -> void {
-        for (const BuildGraph::Node &node : nodes) {
-            StringRef path_ref = sb.add(node.path);
-            payload.insert(payload.end(),
-                           reinterpret_cast<const char *>(&path_ref),
-                           reinterpret_cast<const char *>(&path_ref) + sizeof(StringRef));
-
-            uint64_t step_id = node.step_id.value_or(UINT64_MAX);
-            payload.insert(payload.end(),
-                           reinterpret_cast<const char *>(&step_id),
-                           reinterpret_cast<const char *>(&step_id) + sizeof(uint64_t));
-
-            uint64_t num_out_edges = node.out_edges.size();
-            payload.insert(payload.end(),
-                           reinterpret_cast<const char *>(&num_out_edges),
-                           reinterpret_cast<const char *>(&num_out_edges) + sizeof(uint64_t));
-
-            for (size_t edge : node.out_edges) {
-                uint64_t edge_u64 = edge;
-                payload.insert(payload.end(),
-                               reinterpret_cast<const char *>(&edge_u64),
-                               reinterpret_cast<const char *>(&edge_u64) + sizeof(uint64_t));
-            }
-        }
-    };
-
-    auto emit_steps = [&sb, &payload, &steps]() -> Result<void> {
-        for (const BuildStep &step : steps) {
-            ToolKind tool = toolKindFromString(step.tool);
-            if (tool == ToolKind::INVALID) {
-                return std::unexpected(std::format("Cannot emit .catalyst.bin: unsupported tool '{}'", step.tool));
-            }
-
-            BinStepHeader step_header{};
-            step_header.inputs = sb.add(step.inputs);
-            step_header.output = sb.add(step.output);
-            step_header.extra_flags = sb.add(step.extra_flags);
-            step_header.command_hash = step.command_hash;
-            step_header.depfile_count = step.depfile_inputs.has_value() ? step.depfile_inputs.size() : UINT64_MAX;
-            step_header.tool = tool;
-            std::memset(step_header.padding.data(), 0, step_header.padding.size());
-            payload.insert(payload.end(),
-                           reinterpret_cast<const char *>(&step_header),
-                           reinterpret_cast<const char *>(&step_header) + sizeof(BinStepHeader));
-
-            if (step.depfile_inputs.has_value()) {
-                for (const std::string_view &di : step.depfile_inputs) {
-                    StringRef ref = sb.add(di);
-                    payload.insert(payload.end(),
-                                   reinterpret_cast<const char *>(&ref),
-                                   reinterpret_cast<const char *>(&ref) + sizeof(StringRef));
-                }
-            }
-        }
-        return {};
-    };
-
-    auto emit_header = [&sb, &nodes, &steps](size_t num_definitions) -> BinHeader {
-        BinHeader header{};
-        std::memcpy(header.magic.data(), MAGIC.data(), MAGIC.size());
-        header.endian_marker = BinHeader::EndianMarker::EXPECTED;
-        header.num_definitions = num_definitions;
-        header.num_nodes = nodes.size();
-        header.num_steps = steps.size();
-        header.strings_size = sb.data().size();
-        return header;
-    };
-
-    emit_definitions();
-    emit_nodes();
-    if (auto emit_steps_result = emit_steps(); !emit_steps_result) {
-        return emit_steps_result;
+    // Size the fixed-layout records up front so each byte is written once, with no reallocation.
+    size_t records_size = definitions.size() * sizeof(BinDefinition);
+    for (const BuildGraph::Node &node : nodes) {
+        records_size += sizeof(StringRef) + (2 * sizeof(uint64_t)) + (node.out_edges.size() * sizeof(uint64_t));
     }
-    BinHeader header = emit_header(definitions.size());
-    payload.insert(payload.end(), sb.data().begin(), sb.data().end());
-    header.checksum = calculateChecksum(header, {payload.data(), payload.size()});
+    for (const BuildStep &step : steps) {
+        if (toolKindFromString(step.tool) == ToolKind::INVALID) {
+            return std::unexpected(std::format("Cannot emit .catalyst.bin: unsupported tool '{}'", step.tool));
+        }
+        records_size += sizeof(BinStepHeader) + (step.depfile_inputs.size() * sizeof(StringRef));
+    }
+
+    // NOLINTNEXTLINE(cppcoreguidelines-no-malloc, cppcoreguidelines-owning-memory)
+    std::unique_ptr<char, FreeDeleter> payload(static_cast<char *>(std::malloc(records_size + 1)));
+    if (!payload) {
+        return std::unexpected("Cannot emit .catalyst.bin: out of memory");
+    }
+    char *out = payload.get();
+    auto put = [&out](const auto &value) {
+        std::memcpy(out, &value, sizeof(value));
+        out += sizeof(value);
+    };
+
+    StringBuffer sb;
+    sb.reserve(nodes.size() + (2 * steps.size()) + (2 * definitions.size()));
+    AddressCache node_paths(nodes.size());
+
+    for (const auto &[k, v] : definitions) {
+        put(BinDefinition{.key = sb.add(k), .val = sb.add(v)});
+    }
+
+    static_assert(sizeof(size_t) == sizeof(uint64_t));
+    for (const BuildGraph::Node &node : nodes) {
+        StringRef path_ref = sb.add(node.path);
+        node_paths.insert(node.path, path_ref);
+        put(path_ref);
+        put(static_cast<uint64_t>(node.step_id.value_or(UINT64_MAX)));
+        put(static_cast<uint64_t>(node.out_edges.size()));
+        if (!node.out_edges.empty()) {
+            const size_t edge_bytes = node.out_edges.size() * sizeof(uint64_t);
+            std::memcpy(out, node.out_edges.data(), edge_bytes);
+            out += edge_bytes;
+        }
+    }
+
+    for (const BuildStep &step : steps) {
+        BinStepHeader step_header{};
+        step_header.inputs = sb.add(step.inputs);
+        step_header.output = sb.add(step.output);
+        step_header.extra_flags = sb.add(step.extra_flags);
+        step_header.command_hash = step.command_hash;
+        step_header.depfile_count = step.depfile_inputs.has_value() ? step.depfile_inputs.size() : UINT64_MAX;
+        step_header.tool = toolKindFromString(step.tool);
+        std::memset(step_header.padding.data(), 0, step_header.padding.size());
+        put(step_header);
+
+        for (std::string_view input : step.depfile_inputs) {
+            const StringRef *known = node_paths.find(input);
+            put(known ? *known : sb.add(input));
+        }
+    }
+
+    BinHeader header{};
+    std::memcpy(header.magic.data(), MAGIC.data(), MAGIC.size());
+    header.endian_marker = BinHeader::EndianMarker::EXPECTED;
+    header.num_definitions = definitions.size();
+    header.num_nodes = nodes.size();
+    header.num_steps = steps.size();
+    header.strings_size = sb.data().size();
+
+    // The string pool is small after deduplication; append it after the records.
+    const size_t payload_size = records_size + sb.data().size();
+    // NOLINTNEXTLINE(cppcoreguidelines-no-malloc, cppcoreguidelines-owning-memory)
+    char *grown = static_cast<char *>(std::realloc(payload.get(), payload_size + 1));
+    if (!grown) {
+        return std::unexpected("Cannot emit .catalyst.bin: out of memory");
+    }
+    std::ignore = payload.release();
+    payload.reset(grown);
+    std::memcpy(payload.get() + records_size, sb.data().data(), sb.data().size());
+    header.checksum = calculateChecksum(header, {payload.get(), payload_size});
 
     // NOLINTBEGIN(cppcoreguidelines-narrowing-conversions, bugprone-narrowing-conversions)
-    if (auto write_result = writeBinData(header, {payload.data(), payload.size()}); !write_result) {
+    if (auto write_result = writeBinData(header, {payload.get(), payload_size}); !write_result) {
         std::error_code rm_ec;
         std::filesystem::remove(".catalyst.bin.tmp", rm_ec);
         return write_result;

@@ -249,7 +249,8 @@ Result<size_t> BuildGraph::addStep(BuildStep step) {
         auto depfile_parse_callback = [this, out_id, &step = live_step](std::string_view fn) {
             size_t in_id = getOrCreateNode(fn);
             this->nodes_m[in_id].out_edges.push_back(out_id);
-            step.depfile_inputs.emplace_back(fn);
+            // Same bytes as fn, but the node's view, so equal paths share one address.
+            step.depfile_inputs.emplace_back(this->nodes_m[in_id].path);
         };
         const fs::path depfile_path = std::format("{}.d", live_step.output);
         parseDepfile(*this, depfile_path, depfile_parse_callback);
