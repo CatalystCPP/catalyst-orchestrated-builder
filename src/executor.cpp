@@ -305,9 +305,112 @@ inline uint64_t hashCommand(std::span<const std::string> args) {
 }
 } // namespace
 
+/**
+ * @brief Modification time cache indexed by graph node.
+ *
+ * Every parsed, opaque, and depfile input of a step is a graph node with an edge to the step's output, so a
+ * step's inputs are exactly its node's in-edges. Indexing by node replaces per-lookup hashing, locking, and
+ * string comparison with an array access. Slots are filled at most once without locks; a thread that races
+ * a fill uses its own stat result. Produced nodes are only read after their producer finished (an edge
+ * orders them), so the producer may reset or record its output slot without synchronisation.
+ */
+class Executor::NodeTimes {
+public:
+    NodeTimes(const BuildGraph &graph, std::string_view build_file)
+        : nodes(graph.nodes()), slots(graph.nodes().size()), build_file(build_file),
+          build_file_node(graph.findNode(build_file)) {
+        const size_t node_count = nodes.size();
+        in_offsets.assign(node_count + 1, 0);
+        for (const BuildGraph::Node &node : nodes) {
+            for (size_t out : node.out_edges) {
+                ++in_offsets[out + 1];
+            }
+        }
+        for (size_t i = 0; i < node_count; ++i) {
+            in_offsets[i + 1] += in_offsets[i];
+        }
+        in_nodes.resize(in_offsets[node_count]);
+        std::vector<size_t> cursor(in_offsets.begin(), in_offsets.end() - 1);
+        for (size_t i = 0; i < node_count; ++i) {
+            for (size_t out : nodes[i].out_edges) {
+                in_nodes[cursor[out]++] = i;
+            }
+        }
+    }
+
+    /** @brief The nodes this node's step consumes (parsed, opaque, and depfile inputs). */
+    [[nodiscard]] std::span<const size_t> inputsOf(size_t node) const {
+        return std::span{in_nodes}.subspan(in_offsets[node], in_offsets[node + 1] - in_offsets[node]);
+    }
+
+    /** @brief True if the input is missing or not older than output_time. */
+    bool changedSince(size_t node, fs::file_time_type output_time) {
+        return changedSince(slots[node], nodes[node].path, output_time);
+    }
+
+    bool buildFileChangedSince(fs::file_time_type output_time) {
+        return changedSince(build_file_slot, build_file, output_time);
+    }
+
+    /** @brief Records a time already observed for a node (e.g. an up-to-date output). */
+    void record(size_t node, fs::file_time_type time) {
+        Slot &slot = slots[node];
+        uint8_t expected = UNKNOWN;
+        if (slot.state.compare_exchange_strong(expected, BUSY, std::memory_order_acquire)) {
+            slot.time = time;
+            slot.missing = false;
+            slot.state.store(READY, std::memory_order_release);
+        }
+    }
+
+    /** @brief Drops a node's cached time after its file was rewritten. */
+    void invalidate(size_t node) {
+        slots[node].state.store(UNKNOWN, std::memory_order_release);
+        if (build_file_node == node) {
+            build_file_slot.state.store(UNKNOWN, std::memory_order_release);
+        }
+    }
+
+private:
+    static constexpr uint8_t UNKNOWN = 0;
+    static constexpr uint8_t BUSY = 1;
+    static constexpr uint8_t READY = 2;
+
+    struct Slot {
+        std::atomic<uint8_t> state{UNKNOWN};
+        bool missing = false;
+        fs::file_time_type time;
+    };
+
+    static bool changedSince(Slot &slot, std::string_view path, fs::file_time_type output_time) {
+        if (slot.state.load(std::memory_order_acquire) == READY) {
+            return slot.missing || slot.time >= output_time;
+        }
+
+        std::error_code ec;
+        const fs::file_time_type time = fs::last_write_time(fs::path(path), ec);
+        uint8_t expected = UNKNOWN;
+        if (slot.state.compare_exchange_strong(expected, BUSY, std::memory_order_acquire)) {
+            slot.time = time;
+            slot.missing = static_cast<bool>(ec);
+            slot.state.store(READY, std::memory_order_release);
+        }
+        return ec || time >= output_time;
+    }
+
+    const std::vector<BuildGraph::Node> &nodes;
+    std::vector<Slot> slots;
+    std::vector<size_t> in_offsets;
+    std::vector<size_t> in_nodes;
+    std::string_view build_file;
+    std::optional<size_t> build_file_node;
+    Slot build_file_slot;
+};
+
 [[clang::always_inline]]
 bool inline Executor::needsRebuild(const BuildStep &step,
-                                   StatCache &stat_cache,
+                                   size_t node_idx,
+                                   NodeTimes &node_times,
                                    const ToolchainFlags &flags,
                                    uint64_t *out_hash,
                                    std::vector<std::string> *out_args) const {
@@ -318,64 +421,45 @@ bool inline Executor::needsRebuild(const BuildStep &step,
         *out_hash = current_hash;
     }
 
-    if (!std::filesystem::exists(step.output)) {
+    auto rebuild = [&args, out_args]() {
         if (out_args) {
             *out_args = std::move(args);
         }
         return true;
+    };
+
+    // One stat answers both "does the output exist" and "when was it written".
+    std::error_code ec;
+    fs::file_time_type output_modtime = std::filesystem::last_write_time(step.output, ec);
+    if (ec) {
+        // Unusual failures keep the exists()-then-last_write_time() behaviour, including its exceptions.
+        if (!std::filesystem::exists(step.output) || step.command_hash != current_hash) {
+            return rebuild();
+        }
+        output_modtime = std::filesystem::last_write_time(step.output);
+    } else if (step.command_hash != current_hash) {
+        return rebuild();
     }
 
-    if (step.command_hash != current_hash) {
-        if (out_args) {
-            *out_args = std::move(args);
-        }
-        return true;
+    if (node_times.buildFileChangedSince(output_modtime)) {
+        return rebuild();
     }
 
-    fs::file_time_type output_modtime = std::filesystem::last_write_time(step.output);
-
-    if (stat_cache.changedSince(config.build_file, output_modtime)) {
-        if (out_args) {
-            *out_args = std::move(args);
+    // Parsed, opaque, and depfile inputs (this is also how a stale .d file is detected).
+    for (size_t input : node_times.inputsOf(node_idx)) {
+        if (node_times.changedSince(input, output_modtime)) {
+            return rebuild();
         }
-        return true;
     }
 
-    if (step.depfile_inputs.has_value()) {
-        for (const std::string_view &dep : step.depfile_inputs) {
-            if (stat_cache.changedSince(dep, output_modtime)) {
-                if (out_args) {
-                    *out_args = std::move(args);
-                }
-                return true;
-            }
-        }
-    }
-    if (step.opaque_inputs.has_value()) {
-        for (const std::string_view &opaque : step.opaque_inputs) {
-            if (stat_cache.changedSince(opaque, output_modtime)) {
-                if (out_args) {
-                    *out_args = std::move(args);
-                }
-                return true;
-            }
-        }
-    }
-    // this is our way of making sure that the .d file isn't stale
-    for (const std::string_view &input : step.parsed_inputs) {
-        if (stat_cache.changedSince(input, output_modtime)) {
-            if (out_args) {
-                *out_args = std::move(args);
-            }
-            return true;
-        }
-    }
+    // Up to date: consumers of this output can reuse the time instead of stat'ing it again.
+    node_times.record(node_idx, output_modtime);
     return false;
 }
 
 Result<void> Executor::emitGraph() {
     catalyst::BuildGraph build_graph = builder.emitGraph();
-    StatCache stat_cache;
+    NodeTimes node_times(build_graph, config.build_file);
 
     const auto cc_vec = builder.getDefinitionOf<std::vector<std::string>>("cc");
     const auto cxx_vec = builder.getDefinitionOf<std::vector<std::string>>("cxx");
@@ -405,7 +489,7 @@ Result<void> Executor::emitGraph() {
 
         if (node.step_id.has_value()) {
             const BuildStep &step = build_graph.steps()[*node.step_id];
-            if (needsRebuild(step, stat_cache, tf)) {
+            if (needsRebuild(step, i, node_times, tf)) {
                 color = "green";
             } else {
                 color = "white";
@@ -570,6 +654,7 @@ struct Executor::ExecuteContext {
     const std::vector<std::string> ldlibs_vec;
     catalyst::BuildGraph build_graph;
     std::atomic<bool> error_occurred{false};
+    std::atomic<bool> hashes_changed{false}; ///< Whether the graph differs from the loaded cache.
 
     ExecuteContext(size_t node_count,
                    std::vector<std::string> cc,
@@ -822,7 +907,7 @@ void Executor::printMessage(const BuildStep &step, ExecuteContext &ctx, bool is_
  * Verifies if the node requires rebuilding, generates its command, invokes the process
  * executor, and captures/logs output in a thread-safe manner. Returns 0 on success.
  */
-int Executor::processStep(size_t node_idx, ExecuteContext &ctx, StatCache &stat_cache, bool is_tty) const {
+int Executor::processStep(size_t node_idx, ExecuteContext &ctx, NodeTimes &node_times, bool is_tty) const {
     // NOLINTBEGIN(performance-avoid-endl)
     const BuildGraph::Node &node = ctx.build_graph.nodes()[node_idx];
     if (node.step_id.has_value()) {
@@ -845,7 +930,7 @@ int Executor::processStep(size_t node_idx, ExecuteContext &ctx, StatCache &stat_
 
         uint64_t step_hash = 0;
         std::vector<std::string> args;
-        if (needsRebuild(step, stat_cache, tf, &step_hash, &args)) {
+        if (needsRebuild(step, node_idx, node_times, tf, &step_hash, &args)) {
             printMessage(step, ctx, is_tty);
             if (config.dry_run)
                 return 0;
@@ -919,10 +1004,13 @@ int Executor::processStep(size_t node_idx, ExecuteContext &ctx, StatCache &stat_
                     return ec;
                 }
                 // build succeeded, update the command hash for future up-to-date checks
-                step.command_hash = step_hash;
+                if (step.command_hash != step_hash) {
+                    step.command_hash = step_hash;
+                    ctx.hashes_changed.store(true, std::memory_order_relaxed);
+                }
                 // the output was just rewritten; drop any stale cached modtime so downstream
                 // steps consuming this artifact re-stat it and see the fresh time
-                stat_cache.invalidate(step.output);
+                node_times.invalidate(node_idx);
             } else {
                 std::string err_msg = std::format("Failed to execute: {}\n", res.error());
                 if (start_progress) {
@@ -959,7 +1047,7 @@ int Executor::processStep(size_t node_idx, ExecuteContext &ctx, StatCache &stat_
  * Loops indefinitely retrieving tasks from the lock-free queue. Uses atomic futex waits
  * to sleep when the queue is empty. Implements deadlock detection to resolve stalled graphs.
  */
-void Executor::workerLoop(ExecuteContext &ctx, StatCache &stat_cache, bool is_tty, size_t thread_count) {
+void Executor::workerLoop(ExecuteContext &ctx, NodeTimes &node_times, bool is_tty, size_t thread_count) {
     while (true) {
         ExecuteContext::Task task{};
         while (true) {
@@ -1007,7 +1095,7 @@ void Executor::workerLoop(ExecuteContext &ctx, StatCache &stat_cache, bool is_tt
         }
 #endif
 
-        int result = processStep(task.node_idx, ctx, stat_cache, is_tty);
+        int result = processStep(task.node_idx, ctx, node_times, is_tty);
 
 #if FF_cob__heterogeneous_core_affinity
         setpriority(PRIO_PROCESS, 0, 0); // Reset to default
@@ -1123,7 +1211,7 @@ Result<void> Executor::execute() {
         ctx.tasks_available.fetch_add(1, std::memory_order_release);
     }
 
-    StatCache stat_cache;
+    NodeTimes node_times(ctx.build_graph, config.build_file);
     bool is_tty = ::isatty(STDOUT_FILENO) != 0;
 
 #if FF_cob__logging
@@ -1215,8 +1303,8 @@ Result<void> Executor::execute() {
     }
 
     for (size_t i = 0; i < thread_count; ++i) {
-        pool.emplace_back([this, &ctx, &stat_cache, is_tty, thread_count]() {
-            this->workerLoop(ctx, stat_cache, is_tty, thread_count);
+        pool.emplace_back([this, &ctx, &node_times, is_tty, thread_count]() {
+            this->workerLoop(ctx, node_times, is_tty, thread_count);
         });
     }
 
@@ -1278,7 +1366,8 @@ Result<void> Executor::execute() {
         }
     }
 
-    if (!config.dry_run) {
+    // Command hashes are the only graph state a build changes, so a no-op leaves the cache as it is.
+    if (!config.dry_run && ctx.hashes_changed.load(std::memory_order_relaxed)) {
         builder.m_graph = std::move(ctx.build_graph);
         if (auto bin_res = emitBin(builder); !bin_res) {
             std::println(stderr, "Warning: Failed to write .catalyst.bin: {}", bin_res.error());

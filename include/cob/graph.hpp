@@ -59,6 +59,17 @@ public:
     [[nodiscard]] const std::vector<Node> &nodes() const {
         return nodes_m;
     }
+
+    /**
+     * @brief Looks up the node for an exact path without creating one.
+     * @return The node index, or std::nullopt if no node has this path.
+     */
+    [[nodiscard]] std::optional<size_t> findNode(std::string_view path) const {
+        if (const size_t *ptr = index.find(path)) {
+            return *ptr;
+        }
+        return std::nullopt;
+    }
     [[nodiscard]] const std::vector<BuildStep> &steps() const {
         return steps_m;
     }

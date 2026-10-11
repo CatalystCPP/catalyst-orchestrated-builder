@@ -130,9 +130,11 @@ public:
 
 private:
     struct ExecuteContext; // Forward declaration
+    class NodeTimes;       // Per-node modification time cache, indexed by graph node.
 
     bool needsRebuild(const BuildStep &step,
-                      StatCache &stat_cache,
+                      size_t node_idx,
+                      NodeTimes &node_times,
                       const ToolchainFlags &flags,
                       uint64_t *out_hash = nullptr,
                       std::vector<std::string> *out_args = nullptr) const;
@@ -140,8 +142,8 @@ private:
     [[nodiscard]] std::vector<std::string>
     buildCommandArgs(const BuildStep &step, bool dry_run_mode, const ToolchainFlags &flags) const;
     void printMessage(const BuildStep &step, ExecuteContext &ctx, bool is_tty) const;
-    int processStep(size_t node_idx, ExecuteContext &ctx, StatCache &stat_cache, bool is_tty) const;
-    void workerLoop(ExecuteContext &ctx, StatCache &stat_cache, bool is_tty, size_t thread_count);
+    int processStep(size_t node_idx, ExecuteContext &ctx, NodeTimes &node_times, bool is_tty) const;
+    void workerLoop(ExecuteContext &ctx, NodeTimes &node_times, bool is_tty, size_t thread_count);
 #if FF_cob__estimates
     static void pushReady(size_t idx, ExecuteContext &ctx, WorkEstimate *estimator);
 #else
