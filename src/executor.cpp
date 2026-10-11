@@ -16,7 +16,10 @@
 #include "cob/utility.hpp"
 #include "cob/utils.hpp"
 
+#include <algorithm>
+#include <array>
 #include <atomic>
+#include <charconv>
 #include <cassert>
 #include <chrono>
 #include <cstddef>
@@ -27,6 +30,8 @@
 #include <format>
 #include <fstream>
 #include <iostream>
+#include <limits>
+#include <optional>
 #include <ostream>
 #include <print>
 #include <ranges>
@@ -303,49 +308,87 @@ inline uint64_t hashCommand(std::span<const std::string> args) {
     }
     return hash;
 }
+
+size_t resolveThreadCount(size_t jobs) {
+    size_t thread_count = jobs;
+    if (thread_count == 0)
+        thread_count = std::thread::hardware_concurrency();
+    if (thread_count == 0)
+        thread_count = 1;
+    return thread_count;
+}
 } // namespace
 
 /**
  * @brief Modification time cache indexed by graph node.
  *
  * Every parsed, opaque, and depfile input of a step is a graph node with an edge to the step's output, so a
- * step's inputs are exactly its node's in-edges. Indexing by node replaces per-lookup hashing, locking, and
- * string comparison with an array access. Slots are filled at most once without locks; a thread that races
- * a fill uses its own stat result. Produced nodes are only read after their producer finished (an edge
- * orders them), so the producer may reset or record its output slot without synchronisation.
+ * step's inputs are exactly its node's in-edges. Source inputs (nodes no step produces) cannot change during
+ * the build, so they are stat'ed once up front and folded along the out-edges into a per-node summary: "any
+ * input missing or not older than the output" is "a source is missing or the newest source is not older".
+ * That replaces per-lookup hashing, locking, and string comparison with one comparison per step.
+ *
+ * Produced inputs are checked individually through lock-free slots, filled at most once; a thread that races
+ * a fill uses its own stat result. A produced node is only read after its producer finished (an edge orders
+ * them), so the producer may reset or record its own slot without synchronisation.
  */
 class Executor::NodeTimes {
 public:
-    NodeTimes(const BuildGraph &graph, std::string_view build_file)
-        : nodes(graph.nodes()), slots(graph.nodes().size()), build_file(build_file),
+    NodeTimes(const BuildGraph &graph, std::string_view build_file, size_t thread_count)
+        : nodes(graph.nodes()), slots(graph.nodes().size()), sources(graph.nodes().size()), build_file(build_file),
           build_file_node(graph.findNode(build_file)) {
         const size_t node_count = nodes.size();
-        in_offsets.assign(node_count + 1, 0);
-        for (const BuildGraph::Node &node : nodes) {
+        statSources(thread_count);
+
+        produced_in_offsets.assign(node_count + 1, 0);
+        for (size_t i = 0; i < node_count; ++i) {
+            const BuildGraph::Node &node = nodes[i];
+            if (node.step_id.has_value()) {
+                for (size_t out : node.out_edges) {
+                    ++produced_in_offsets[out + 1];
+                }
+                continue;
+            }
+            const SourceSummary &time = sources[i];
             for (size_t out : node.out_edges) {
-                ++in_offsets[out + 1];
+                SourceSummary &summary = sources[out];
+                if (time.missing) {
+                    summary.missing = true;
+                } else if (!summary.any || time.newest > summary.newest) {
+                    summary.newest = time.newest;
+                }
+                summary.any = true;
             }
         }
         for (size_t i = 0; i < node_count; ++i) {
-            in_offsets[i + 1] += in_offsets[i];
+            produced_in_offsets[i + 1] += produced_in_offsets[i];
         }
-        in_nodes.resize(in_offsets[node_count]);
-        std::vector<size_t> cursor(in_offsets.begin(), in_offsets.end() - 1);
+        produced_in_nodes.resize(produced_in_offsets[node_count]);
+        std::vector<size_t> cursor(produced_in_offsets.begin(), produced_in_offsets.end() - 1);
         for (size_t i = 0; i < node_count; ++i) {
-            for (size_t out : nodes[i].out_edges) {
-                in_nodes[cursor[out]++] = i;
+            if (nodes[i].step_id.has_value()) {
+                for (size_t out : nodes[i].out_edges) {
+                    produced_in_nodes[cursor[out]++] = i;
+                }
             }
         }
     }
 
-    /** @brief The nodes this node's step consumes (parsed, opaque, and depfile inputs). */
-    [[nodiscard]] std::span<const size_t> inputsOf(size_t node) const {
-        return std::span{in_nodes}.subspan(in_offsets[node], in_offsets[node + 1] - in_offsets[node]);
-    }
-
-    /** @brief True if the input is missing or not older than output_time. */
-    bool changedSince(size_t node, fs::file_time_type output_time) {
-        return changedSince(slots[node], nodes[node].path, output_time);
+    /** @brief True if any parsed, opaque, or depfile input of the node is missing or not older than output_time. */
+    bool inputsChangedSince(size_t node, fs::file_time_type output_time) {
+        const SourceSummary &summary = sources[node];
+        if (summary.any && (summary.missing || summary.newest >= output_time)) {
+            return true;
+        }
+        const size_t begin = produced_in_offsets[node];
+        const size_t end = produced_in_offsets[node + 1];
+        for (size_t i = begin; i < end; ++i) {
+            const size_t input = produced_in_nodes[i];
+            if (changedSince(slots[input], nodes[input].path, output_time)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     bool buildFileChangedSince(fs::file_time_type output_time) {
@@ -375,12 +418,50 @@ private:
     static constexpr uint8_t UNKNOWN = 0;
     static constexpr uint8_t BUSY = 1;
     static constexpr uint8_t READY = 2;
+    static constexpr size_t STATS_PER_THREAD = 256;
 
     struct Slot {
         std::atomic<uint8_t> state{UNKNOWN};
         bool missing = false;
         fs::file_time_type time;
     };
+
+    /** @brief For a source node, its own time; for any other node, the newest of its source inputs. */
+    struct SourceSummary {
+        fs::file_time_type newest;
+        bool missing = false;
+        bool any = false;
+    };
+
+    void statSources(size_t thread_count) {
+        std::vector<size_t> pending;
+        for (size_t i = 0; i < nodes.size(); ++i) {
+            if (!nodes[i].step_id.has_value() && !nodes[i].out_edges.empty()) {
+                pending.push_back(i);
+            }
+        }
+        auto stat_range = [this, &pending](size_t begin, size_t end) {
+            for (size_t i = begin; i < end; ++i) {
+                std::error_code ec;
+                SourceSummary &time = sources[pending[i]];
+                time.newest = fs::last_write_time(fs::path(nodes[pending[i]].path), ec);
+                time.missing = static_cast<bool>(ec);
+            }
+        };
+
+        const size_t workers = std::min(thread_count, pending.size() / STATS_PER_THREAD);
+        if (workers <= 1) {
+            stat_range(0, pending.size());
+            return;
+        }
+        std::vector<std::jthread> threads;
+        threads.reserve(workers - 1);
+        const size_t chunk = (pending.size() + workers - 1) / workers;
+        for (size_t begin = chunk; begin < pending.size(); begin += chunk) {
+            threads.emplace_back(stat_range, begin, std::min(begin + chunk, pending.size()));
+        }
+        stat_range(0, chunk);
+    }
 
     static bool changedSince(Slot &slot, std::string_view path, fs::file_time_type output_time) {
         if (slot.state.load(std::memory_order_acquire) == READY) {
@@ -400,8 +481,9 @@ private:
 
     const std::vector<BuildGraph::Node> &nodes;
     std::vector<Slot> slots;
-    std::vector<size_t> in_offsets;
-    std::vector<size_t> in_nodes;
+    std::vector<SourceSummary> sources;
+    std::vector<size_t> produced_in_offsets;
+    std::vector<size_t> produced_in_nodes;
     std::string_view build_file;
     std::optional<size_t> build_file_node;
     Slot build_file_slot;
@@ -446,10 +528,8 @@ bool inline Executor::needsRebuild(const BuildStep &step,
     }
 
     // Parsed, opaque, and depfile inputs (this is also how a stale .d file is detected).
-    for (size_t input : node_times.inputsOf(node_idx)) {
-        if (node_times.changedSince(input, output_modtime)) {
-            return rebuild();
-        }
+    if (node_times.inputsChangedSince(node_idx, output_modtime)) {
+        return rebuild();
     }
 
     // Up to date: consumers of this output can reuse the time instead of stat'ing it again.
@@ -459,7 +539,7 @@ bool inline Executor::needsRebuild(const BuildStep &step,
 
 Result<void> Executor::emitGraph() {
     catalyst::BuildGraph build_graph = builder.emitGraph();
-    NodeTimes node_times(build_graph, config.build_file);
+    NodeTimes node_times(build_graph, config.build_file, resolveThreadCount(config.jobs));
 
     const auto cc_vec = builder.getDefinitionOf<std::vector<std::string>>("cc");
     const auto cxx_vec = builder.getDefinitionOf<std::vector<std::string>>("cxx");
@@ -479,13 +559,23 @@ Result<void> Executor::emitGraph() {
                          .ldflags = ldflags_vec,
                          .ldlibs = ldlibs_vec};
 
-    std::cout << "digraph catalyst_build {\n";
-    std::cout << "  rankdir=LR;\n";
-    std::cout << "  node [shape=box, style=filled, fontname=\"Helvetica\"];\n";
+    // Formatting into one buffer avoids a locale-aware stream insertion per token.
+    std::string buf;
+    buf.reserve(BUF_INIT_CAPACITY);
+    auto append_node_id = [&buf](size_t idx) {
+        constexpr size_t MAX_DIGITS = std::numeric_limits<size_t>::digits10 + 1;
+        std::array<char, MAX_DIGITS + 3> id{' ', ' ', 'n'};
+        auto [end, ec] = std::to_chars(id.data() + 3, id.data() + id.size(), idx);
+        buf.append(id.data(), end);
+    };
+
+    buf.append("digraph catalyst_build {\n");
+    buf.append("  rankdir=LR;\n");
+    buf.append("  node [shape=box, style=filled, fontname=\"Helvetica\"];\n");
 
     for (size_t i = 0; i < build_graph.nodes().size(); ++i) {
         const BuildGraph::Node &node = build_graph.nodes()[i];
-        std::string color = "0.9 0.9 0.9"; // light gray for source files
+        std::string_view color = "0.9 0.9 0.9"; // light gray for source files
 
         if (node.step_id.has_value()) {
             const BuildStep &step = build_graph.steps()[*node.step_id];
@@ -496,13 +586,29 @@ Result<void> Executor::emitGraph() {
             }
         }
 
-        std::cout << "  n" << i << " [label=\"" << node.path << "\", fillcolor=\"" << color << "\"];\n";
+        append_node_id(i);
+        buf.append(" [label=\"");
+        buf.append(node.path);
+        buf.append("\", fillcolor=\"");
+        buf.append(color);
+        buf.append("\"];\n");
 
         for (size_t target_idx : node.out_edges) {
-            std::cout << "  n" << i << " -> n" << target_idx << ";\n";
+            append_node_id(i);
+            buf.append(" -> n");
+            std::array<char, std::numeric_limits<size_t>::digits10 + 1> target{};
+            auto [end, ec] = std::to_chars(target.data(), target.data() + target.size(), target_idx);
+            buf.append(target.data(), end);
+            buf.append(";\n");
+        }
+
+        if (buf.size() > FLUSH_THRESHOLD) {
+            std::cout.write(buf.data(), static_cast<std::streamsize>(buf.size()));
+            buf.clear();
         }
     }
-    std::cout << "}\n";
+    buf.append("}\n");
+    std::cout.write(buf.data(), static_cast<std::streamsize>(buf.size()));
     return {};
 }
 
@@ -1173,9 +1279,15 @@ Result<void> Executor::execute() {
                        builder.getDefinitionOf<std::vector<std::string>>("ldlibs"),
                        std::move(build_graph));
 
-    // Build initial in-degrees in a thread-safe atomic vector
+    // Source nodes (no producing step) have nothing to run, so they start out completed instead of being
+    // scheduled. In-degrees then only count produced inputs, which avoids an atomic decrement per source edge.
     std::vector<int> temp_in_degrees(ctx.total_nodes, 0);
+    size_t source_nodes = 0;
     for (const BuildGraph::Node &node : ctx.build_graph.nodes()) {
+        if (!node.step_id.has_value()) {
+            ++source_nodes;
+            continue;
+        }
         for (size_t out : node.out_edges) {
             temp_in_degrees[out]++;
         }
@@ -1183,11 +1295,12 @@ Result<void> Executor::execute() {
     for (size_t i = 0; i < ctx.in_degrees.size(); ++i) {
         ctx.in_degrees[i].store(temp_in_degrees[i], std::memory_order_relaxed);
     }
+    ctx.completed_count.store(source_nodes, std::memory_order_relaxed);
 
     // Pre-sort the initial root tasks to preserve Longest Processing Time first (LPT) scheduling
     std::vector<ExecuteContext::Task> initial_tasks;
     for (size_t i = 0; i < ctx.in_degrees.size(); ++i) {
-        if (ctx.in_degrees[i].load(std::memory_order_relaxed) == 0) {
+        if (ctx.build_graph.nodes()[i].step_id.has_value() && ctx.in_degrees[i].load(std::memory_order_relaxed) == 0) {
             size_t est = 0;
 #if FF_cob__estimates
             const auto &node = ctx.build_graph.nodes()[i];
@@ -1211,7 +1324,8 @@ Result<void> Executor::execute() {
         ctx.tasks_available.fetch_add(1, std::memory_order_release);
     }
 
-    NodeTimes node_times(ctx.build_graph, config.build_file);
+    const size_t thread_count = resolveThreadCount(config.jobs);
+    NodeTimes node_times(ctx.build_graph, config.build_file, thread_count);
     bool is_tty = ::isatty(STDOUT_FILENO) != 0;
 
 #if FF_cob__logging
@@ -1239,12 +1353,6 @@ Result<void> Executor::execute() {
             }
         }
     }
-
-    size_t thread_count = config.jobs;
-    if (thread_count == 0)
-        thread_count = std::thread::hardware_concurrency();
-    if (thread_count == 0)
-        thread_count = 1;
 
     std::jthread progress_thread;
 #if FF_cob__logging
