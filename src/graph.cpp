@@ -8,7 +8,11 @@
 #include "cob/utility.hpp"
 
 #include <algorithm>
+#include <bit>
+#include <climits>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <format>
 #include <memory>
@@ -58,18 +62,50 @@ const char *skipWhitespace(const char *ptr, const char *end) {
     return ptr;
 }
 
-// Helper to extract a single token, handling escaped spaces
-const char *extractToken(const char *ptr, const char *end, std::string_view &out_token) {
-    const char *start = ptr;
+// Finds the first byte that ends a plain token or needs decoding: whitespace and control characters, '\\',
+// '#', or '$'. Scans a word at a time: the per-byte tests below can only misfire above a byte that truly
+// matches, so on little-endian targets the lowest flagged byte is exact.
+const char *findTokenSpecial(const char *ptr, const char *end) {
+    if constexpr (std::endian::native == std::endian::little) {
+        constexpr uint64_t ONES = 0x0101010101010101ULL;
+        constexpr uint64_t HIGHS = 0x8080808080808080ULL;
+        constexpr unsigned char FIRST_PLAIN = '!'; // bytes below this end a token
+        auto zero_bytes = [](uint64_t word) { return (word - ONES) & ~word & HIGHS; };
+        while (end - ptr >= static_cast<std::ptrdiff_t>(sizeof(uint64_t))) {
+            uint64_t word = 0;
+            std::memcpy(&word, ptr, sizeof(word));
+            const uint64_t hits = ((word - (ONES * FIRST_PLAIN)) & ~word & HIGHS) |
+                                  zero_bytes(word ^ (ONES * '\\')) | zero_bytes(word ^ (ONES * '#')) |
+                                  zero_bytes(word ^ (ONES * '$'));
+            if (hits != 0) {
+                return ptr + (std::countr_zero(hits) / CHAR_BIT);
+            }
+            ptr += sizeof(uint64_t);
+        }
+    }
     while (ptr < end) {
         unsigned char c = *ptr;
-        if (c <= ' ' || c == '\\' || c == '#')
+        if (c <= ' ' || c == '\\' || c == '#' || c == '$')
             break;
         ptr++;
+    }
+    return ptr;
+}
+
+// Helper to extract a single token, handling escaped spaces. Sets needs_decode if the token contains a
+// backslash or a dollar.
+const char *extractToken(const char *ptr, const char *end, std::string_view &out_token, bool &needs_decode) {
+    const char *start = ptr;
+    needs_decode = false;
+    ptr = findTokenSpecial(ptr, end);
+    while (ptr < end && *ptr == '$') {
+        needs_decode = true;
+        ptr = findTokenSpecial(ptr + 1, end);
     }
 
     // Handle escaped characters (spaces, etc.)
     if (ptr < end && *ptr == '\\') {
+        needs_decode = true;
         while (ptr < end) {
             if (*ptr == '\\') {
                 const char *slash_start = ptr;
@@ -105,8 +141,8 @@ const char *extractToken(const char *ptr, const char *end, std::string_view &out
 
 // Make quoting is not shell quoting: backslashes before ordinary characters
 // are literal, and a dollar is represented by two dollars.
-std::string_view decodeDepfileToken(BuildGraph &graph, std::string_view token) {
-    if (token.find_first_of("\\$") == std::string_view::npos) {
+std::string_view decodeDepfileToken(BuildGraph &graph, std::string_view token, bool needs_decode) {
+    if (!needs_decode || token.find_first_of("\\$") == std::string_view::npos) {
         return token;
     }
 
@@ -198,10 +234,11 @@ void parseDepfile(BuildGraph &graph, const std::filesystem::path &path, auto cal
             break;
 
         std::string_view token;
-        ptr = extractToken(ptr, end, token);
+        bool needs_decode = false;
+        ptr = extractToken(ptr, end, token, needs_decode);
 
         if (!token.empty()) {
-            callback(decodeDepfileToken(graph, token));
+            callback(decodeDepfileToken(graph, token, needs_decode));
         }
     }
 }
