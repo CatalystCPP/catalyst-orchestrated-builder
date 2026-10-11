@@ -16,6 +16,64 @@
 namespace catalyst {
 
 /**
+ * @brief The out-edges of a graph node.
+ *
+ * Edges loaded from a binary cache are borrowed from its mapping (which the graph keeps alive) instead of
+ * being copied; the list switches to owned storage the first time it is modified.
+ */
+// NOLINTBEGIN(readability-identifier-naming): mirrors standard container names
+class EdgeList {
+public:
+    using value_type = size_t;
+    using const_iterator = const size_t *;
+    using iterator = const_iterator;
+
+    EdgeList() = default;
+
+    /** @brief Creates a list that refers to `count` edges at `edges` without copying them. */
+    static EdgeList borrow(const size_t *edges, size_t count) noexcept {
+        EdgeList list;
+        list.borrowed = edges;
+        list.borrowed_size = count;
+        return list;
+    }
+
+    [[nodiscard]] const size_t *data() const noexcept {
+        return borrowed ? borrowed : owned.data();
+    }
+    [[nodiscard]] size_t size() const noexcept {
+        return borrowed ? borrowed_size : owned.size();
+    }
+    [[nodiscard]] bool empty() const noexcept {
+        return size() == 0;
+    }
+    [[nodiscard]] const_iterator begin() const noexcept {
+        return data();
+    }
+    [[nodiscard]] const_iterator end() const noexcept {
+        return data() + size();
+    }
+    size_t operator[](size_t index) const noexcept {
+        return data()[index];
+    }
+
+    void push_back(size_t edge) {
+        if (borrowed) {
+            owned.assign(borrowed, borrowed + borrowed_size);
+            borrowed = nullptr;
+            borrowed_size = 0;
+        }
+        owned.push_back(edge);
+    }
+
+private:
+    std::vector<size_t> owned;
+    const size_t *borrowed = nullptr;
+    size_t borrowed_size = 0;
+};
+// NOLINTEND(readability-identifier-naming)
+
+/**
  * @brief Represents the dependency graph of the build system.
  *
  * This class manages nodes (files) and edges (dependencies), as well as the list of build steps.
@@ -26,7 +84,7 @@ public:
     /** @brief Represents a node in the dependency graph (typically a file). */
     struct Node {
         std::string_view path;
-        std::vector<size_t> out_edges; ///< Indices of nodes that depend on this node.
+        EdgeList out_edges; ///< Indices of nodes that depend on this node.
         std::optional<size_t> step_id; ///< Index of the BuildStep that produces this node (if any).
     };
 

@@ -1257,9 +1257,47 @@ Result<void> Executor::execute() {
     if (build_graph.nodes().empty())
         return {};
 
-    // Run topo_sort once up front to detect real cycles deterministically.
-    if (auto topo_res = build_graph.topoSort(); !topo_res) {
-        return std::unexpected(topo_res.error());
+    // Source nodes (no producing step) have nothing to run, so they start out completed instead of being
+    // scheduled. In-degrees then only count produced inputs, which avoids an atomic decrement per source edge.
+    std::vector<int> temp_in_degrees(build_graph.nodes().size(), 0);
+    size_t source_nodes = 0;
+    for (const BuildGraph::Node &node : build_graph.nodes()) {
+        if (!node.step_id.has_value()) {
+            ++source_nodes;
+            continue;
+        }
+        for (size_t out : node.out_edges) {
+            temp_in_degrees[out]++;
+        }
+    }
+
+    // Detect real cycles up front, deterministically. Sources have no in-edges, so a cycle can only pass through
+    // produced nodes; Kahn's algorithm over them avoids walking every depfile edge. When a cycle exists, the
+    // full DFS runs to name the node it reports.
+    {
+        std::vector<int> remaining = temp_in_degrees;
+        std::vector<size_t> ready;
+        for (size_t i = 0; i < remaining.size(); ++i) {
+            if (build_graph.nodes()[i].step_id.has_value() && remaining[i] == 0) {
+                ready.push_back(i);
+            }
+        }
+        size_t visited = 0;
+        while (!ready.empty()) {
+            const size_t node = ready.back();
+            ready.pop_back();
+            ++visited;
+            for (size_t out : build_graph.nodes()[node].out_edges) {
+                if (--remaining[out] == 0) {
+                    ready.push_back(out);
+                }
+            }
+        }
+        if (visited + source_nodes != build_graph.nodes().size()) {
+            if (auto topo_res = build_graph.topoSort(); !topo_res) {
+                return std::unexpected(topo_res.error());
+            }
+        }
     }
 
     const auto cc_vec = builder.getDefinitionOf<std::vector<std::string>>("cc");
@@ -1279,19 +1317,6 @@ Result<void> Executor::execute() {
                        builder.getDefinitionOf<std::vector<std::string>>("ldlibs"),
                        std::move(build_graph));
 
-    // Source nodes (no producing step) have nothing to run, so they start out completed instead of being
-    // scheduled. In-degrees then only count produced inputs, which avoids an atomic decrement per source edge.
-    std::vector<int> temp_in_degrees(ctx.total_nodes, 0);
-    size_t source_nodes = 0;
-    for (const BuildGraph::Node &node : ctx.build_graph.nodes()) {
-        if (!node.step_id.has_value()) {
-            ++source_nodes;
-            continue;
-        }
-        for (size_t out : node.out_edges) {
-            temp_in_degrees[out]++;
-        }
-    }
     for (size_t i = 0; i < ctx.in_degrees.size(); ++i) {
         ctx.in_degrees[i].store(temp_in_degrees[i], std::memory_order_relaxed);
     }

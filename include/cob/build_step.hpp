@@ -5,11 +5,132 @@
 
 #include "cob/optional_vector.hpp"
 
+#include <cstddef>
+#include <cstdint>
 #include <flat_map>
+#include <iterator>
 #include <string_view>
 #include <vector>
 
 namespace catalyst {
+
+/** @brief A reference to a string in the binary cache's string pool. */
+struct StringRef {
+    uint64_t offset; ///< Offset into the string pool.
+    uint64_t len;    ///< Length of the string in bytes.
+};
+
+/**
+ * @brief The inputs a step discovered from its dependency file.
+ *
+ * Lists loaded from a binary cache are borrowed from its mapping (which the graph keeps alive) and decoded on
+ * access instead of being copied; the list switches to owned storage the first time it is modified.
+ */
+// NOLINTBEGIN(readability-identifier-naming): mirrors standard container names
+class DepfileInputs {
+public:
+    class iterator {
+    public:
+        using iterator_concept = std::forward_iterator_tag;
+        using value_type = std::string_view;
+        using difference_type = std::ptrdiff_t;
+
+        iterator() = default;
+        iterator(const DepfileInputs *list, size_t index) noexcept : list(list), index(index) {
+        }
+
+        std::string_view operator*() const noexcept {
+            return (*list)[index];
+        }
+        iterator &operator++() noexcept {
+            ++index;
+            return *this;
+        }
+        iterator operator++(int) noexcept {
+            iterator previous = *this;
+            ++index;
+            return previous;
+        }
+        bool operator==(const iterator &other) const noexcept {
+            return index == other.index;
+        }
+
+    private:
+        const DepfileInputs *list = nullptr;
+        size_t index = 0;
+    };
+    using const_iterator = iterator;
+    using value_type = std::string_view;
+
+    DepfileInputs() = default;
+
+    /** @brief Creates a list that decodes `count` references into `strings` on access. */
+    static DepfileInputs borrow(const StringRef *refs, size_t count, const char *strings) noexcept {
+        DepfileInputs list;
+        list.borrowed_refs = refs;
+        list.borrowed_strings = strings;
+        list.borrowed_size = count;
+        list.borrowed = true;
+        return list;
+    }
+
+    /** @brief Whether the step had a dependency file (an empty one still has a value). */
+    [[nodiscard]] bool has_value() const noexcept {
+        return borrowed || owned.has_value();
+    }
+    [[nodiscard]] size_t size() const noexcept {
+        return borrowed ? borrowed_size : owned.size();
+    }
+    [[nodiscard]] bool empty() const noexcept {
+        return size() == 0;
+    }
+    std::string_view operator[](size_t index) const noexcept {
+        if (borrowed) {
+            const StringRef &ref = borrowed_refs[index];
+            return {borrowed_strings + ref.offset, ref.len};
+        }
+        return owned[index];
+    }
+    [[nodiscard]] iterator begin() const noexcept {
+        return {this, 0};
+    }
+    [[nodiscard]] iterator end() const noexcept {
+        return {this, size()};
+    }
+
+    void reserve(size_t capacity) {
+        makeOwned();
+        owned.reserve(capacity);
+    }
+    void emplace_back(std::string_view path) {
+        makeOwned();
+        owned.emplace_back(path);
+    }
+    void push_back(std::string_view path) {
+        emplace_back(path);
+    }
+
+private:
+    void makeOwned() {
+        if (!borrowed) {
+            return;
+        }
+        optional_vector<std::string_view> copy;
+        copy.reserve(borrowed_size);
+        for (size_t i = 0; i < borrowed_size; ++i) {
+            copy.emplace_back((*this)[i]);
+        }
+        owned = std::move(copy);
+        borrowed = false;
+    }
+
+    optional_vector<std::string_view> owned;
+    const StringRef *borrowed_refs = nullptr;
+    const char *borrowed_strings = nullptr;
+    size_t borrowed_size = 0;
+    bool borrowed = false;
+};
+// NOLINTEND(readability-identifier-naming)
 
 /**
  * @brief Represents a single build step execution.
@@ -35,7 +156,7 @@ struct BuildStep {
     /**
      * @brief Inputs discovered dynamically from a dependency file (e.g., .d files from GCC/Clang).
      */
-    catalyst::optional_vector<std::string_view> depfile_inputs;
+    catalyst::DepfileInputs depfile_inputs;
 
     /** @brief List of explicit input file paths parsed from the `inputs` string. */
     std::vector<std::string_view> parsed_inputs;

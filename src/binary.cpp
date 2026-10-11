@@ -339,12 +339,10 @@ Result<void> parseBin(COBBuilder &builder) {
 
             std::optional<size_t> step_id =
                 (step_id_raw == UINT64_MAX) ? std::nullopt : std::make_optional(step_id_raw);
-            std::vector<size_t> out_edges;
-            out_edges.reserve(num_out_edges);
-            for (uint64_t j = 0; j < num_out_edges; ++j) {
-                out_edges.push_back(*reinterpret_cast<const uint64_t *>(content_body_ptr));
-                content_body_ptr += sizeof(uint64_t);
-            }
+            // Edges are borrowed from the mapping, which the graph keeps alive.
+            static_assert(sizeof(size_t) == sizeof(uint64_t));
+            EdgeList out_edges = EdgeList::borrow(reinterpret_cast<const size_t *>(content_body_ptr), num_out_edges);
+            content_body_ptr += num_out_edges * sizeof(uint64_t);
 
             std::string_view path = get_sv(path_ref);
             nodes.push_back({.path = path, .out_edges = std::move(out_edges), .step_id = step_id});
@@ -352,7 +350,7 @@ Result<void> parseBin(COBBuilder &builder) {
         }
     };
 
-    auto parse_steps = [&content_body_ptr, &header, &steps, get_sv]() -> Result<void> {
+    auto parse_steps = [&content_body_ptr, &header, &steps, &strings_base, get_sv]() -> Result<void> {
         steps.reserve(header->num_steps);
 
         for (uint64_t i = 0; i < header->num_steps; ++i) {
@@ -365,14 +363,12 @@ Result<void> parseBin(COBBuilder &builder) {
                                                    static_cast<unsigned int>(step_header->tool)));
             }
 
-            catalyst::optional_vector<std::string_view> depfile_inputs;
+            // Depfile inputs are borrowed from the mapping and decoded on access.
+            DepfileInputs depfile_inputs;
             if (step_header->depfile_count != UINT64_MAX) {
-                depfile_inputs.reserve(step_header->depfile_count);
-                for (uint64_t j = 0; j < step_header->depfile_count; ++j) {
-                    StringRef ref = *reinterpret_cast<const StringRef *>(content_body_ptr);
-                    content_body_ptr += sizeof(StringRef);
-                    depfile_inputs.push_back(get_sv(ref));
-                }
+                depfile_inputs = DepfileInputs::borrow(
+                    reinterpret_cast<const StringRef *>(content_body_ptr), step_header->depfile_count, strings_base);
+                content_body_ptr += step_header->depfile_count * sizeof(StringRef);
             }
 
             std::vector<std::string_view> parsed_inputs;
