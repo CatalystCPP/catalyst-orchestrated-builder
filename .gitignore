@@ -18,3 +18,4 @@ report.log
 report.out
 benchmarks/cobr*
 .catalyst.logs
+catalyst_explain_*.md
